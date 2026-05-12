@@ -9,8 +9,8 @@ BUILD		:=	build
 SOURCES		:=	source
 INCLUDES	:=	include
 
-# Hier setzen wir die Pfade so, dass der Linker sie garantiert findet
-LIBDIRS	:=	$(CTRULIB)
+# Absolute Absicherung der Pfade für den Linker
+LIBDIRS	:=	$(CTRULIB) $(DEVKITPRO)/libctru
 
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 			-fomit-frame-pointer -ffunction-sections \
@@ -22,9 +22,9 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
 
-# Die LDFLAGS brauchen die -L Pfade, um 3dsx_crt0.o und -lctru zu finden
+# Wir fügen hier explizit den Standard-Lib-Pfad von libctru hinzu
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LDFLAGS	+=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+LDFLAGS	+=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib) -L$(DEVKITPRO)/libctru/lib
 
 LIBS	:= -lctru -lm
 
