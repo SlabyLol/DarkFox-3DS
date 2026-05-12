@@ -9,6 +9,9 @@ BUILD		:=	build
 SOURCES		:=	source
 INCLUDES	:=	include
 
+# Hier setzen wir die Pfade so, dass der Linker sie garantiert findet
+LIBDIRS	:=	$(CTRULIB)
+
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 			-fomit-frame-pointer -ffunction-sections \
 			$(ARCH)
@@ -18,12 +21,12 @@ CFLAGS	+=	$(INCLUDE) -D__3DS__
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
+
+# Die LDFLAGS brauchen die -L Pfade, um 3dsx_crt0.o und -lctru zu finden
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LDFLAGS	+=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
 LIBS	:= -lctru -lm
-
-LIBDIRS	:=	$(CTRULIB)
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
