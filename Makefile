@@ -1,4 +1,12 @@
 #---------------------------------------------------------------------------------
+# Path to devkitARM and 3DS Rules
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(DEVKITARM)),)
+$(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
+endif
+
+include $(DEVKITARM)/3ds_rules
+
 # TARGET is the name of the output
 # BUILD is the directory where object files & dependency files will be placed
 # SOURCES is a list of directories containing source code
@@ -79,15 +87,15 @@ $(OUTPUT).elf	:	$(OFILES)
 #---------------------------------------------------------------------------------
 %.o: %.cpp
 	@echo $(notdir $<)
-	$(CXX) -MMD -MP -MF $(DEPSDIR)/$*.d $(CXXFLAGS) -c $< -o $@ $(ERROR_FILTER)
+	$(CXX) -MMD -MP -MF $(DEPSDIR)/$*.d $(CXXFLAGS) -c $< -o $@
 
 %.o: %.c
 	@echo $(notdir $<)
-	$(CC) -MMD -MP -MF $(DEPSDIR)/$*.d $(CFLAGS) -c $< -o $@ $(ERROR_FILTER)
+	$(CC) -MMD -MP -MF $(DEPSDIR)/$*.d $(CFLAGS) -c $< -o $@
 
 %.o: %.s
 	@echo $(notdir $<)
-	$(AS) -g $(ASFLAGS) -c $< -o $@ $(ERROR_FILTER)
+	$(AS) -g $(ASFLAGS) -c $< -o $@
 
 -include $(DEPENDS)
 
