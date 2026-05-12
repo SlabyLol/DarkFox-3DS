@@ -22,21 +22,22 @@ jobs:
         run: |
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Verifikation
-        run: |
-          echo "=== 3dsx_crt0.o ==="
-          find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null \
-            || { echo "FEHLER: 3dsx_crt0.o nicht gefunden!"; exit 1; }
-          echo "=== arm-none-eabi-g++ ==="
-          arm-none-eabi-g++ --version
-
       - name: Build project
         run: make
+
+      - name: Build-Ausgabe prüfen
+        run: |
+          echo "=== Verzeichnis ==="
+          ls -la
+          echo "=== .3dsx suchen ==="
+          find . -name "*.3dsx" -o -name "*.elf" -o -name "*.smdh" 2>/dev/null
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DarkFox-3DS-build
           path: |
-            *.3dsx
-            *.smdh
+            ${{ github.workspace }}/*.3dsx
+            ${{ github.workspace }}/*.smdh
+            ${{ github.workspace }}/*.elf
+          if-no-files-found: error
