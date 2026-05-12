@@ -84,6 +84,8 @@ DEPENDS	:=	$(OFILES:.o=.d)
 
 $(OUTPUT).3dsx	:	$(OUTPUT).elf
 $(OUTPUT).elf	:	$(OFILES)
+	@echo linking $(notdir $@)
+	$(CXX) $(LDFLAGS) $(OFILES) $(LIBS) -o $@
 
 #---------------------------------------------------------------------------------
 # main rule for building the object files
