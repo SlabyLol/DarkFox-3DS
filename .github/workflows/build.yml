@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkitarm:latest
-      # Umgebungsvariablen aus dem Container explizit weitergeben
       env:
         DEVKITPRO: /opt/devkitpro
         DEVKITARM: /opt/devkitpro/devkitARM
@@ -19,24 +18,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Umgebung prüfen & PATH setzen
+      - name: PATH setzen
         run: |
-          export PATH="$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH"
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH" >> $GITHUB_ENV
-          echo "=== GCC Version ==="
-          arm-none-eabi-gcc --version
-          echo "=== crt0 Pfad ==="
-          arm-none-eabi-gcc -print-file-name=3dsx_crt0.o
-          echo "=== Startfile-Suchpfade ==="
-          arm-none-eabi-gcc -print-search-dirs | head -5
+
+      - name: Diagnose (vor Installation)
+        run: |
+          echo "=== 3dsx_crt0.o suchen ==="
+          find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null || echo "NICHT GEFUNDEN"
+          echo "=== Installierte 3DS-Pakete ==="
+          dkp-pacman -Q 2>/dev/null | grep -iE "3ds|ctru" || echo "Keine 3DS-Pakete"
+          echo "=== libctru/lib ==="
+          ls /opt/devkitpro/libctru/lib/ 2>/dev/null || echo "Verzeichnis fehlt"
 
       - name: 3DS-Dev-Tools installieren
         run: |
-          # Pakete installieren; Fehler abfangen falls schon vorhanden
-          dkp-pacman -S --noconfirm 3ds-dev 2>&1 || echo "3ds-dev bereits installiert oder Paketserver nicht erreichbar – fahre fort."
-          # Prüfen ob die wichtigsten Dateien vorhanden sind
-          echo "=== libctru prüfen ==="
-          ls /opt/devkitpro/libctru/lib/ | grep -E "(crt0|ctru)" || echo "WARNUNG: libctru-Dateien nicht gefunden!"
+          # Paketdatenbank aktualisieren, dann 3ds-dev installieren
+          dkp-pacman -Sy --noconfirm
+          dkp-pacman -S --noconfirm 3ds-dev
+
+          # Harter Verifikations-Check - bricht den Build ab wenn crt0 fehlt
+          echo "=== Verifikation ==="
+          find /opt/devkitpro -name "3dsx_crt0.o" | grep . \
+            || { echo "FEHLER: 3dsx_crt0.o nach Installation nicht gefunden!"; exit 1; }
 
       - name: Build project
         run: |
