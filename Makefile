@@ -9,8 +9,8 @@ BUILD		:=	build
 SOURCES		:=	source
 INCLUDES	:=	include
 
-# Absolute Absicherung der Pfade für den Linker
-LIBDIRS	:=	$(CTRULIB) $(DEVKITPRO)/libctru
+# Wir definieren den Pfad zur libctru absolut
+CTRU_LIB_PATH := /opt/devkitpro/libctru/lib
 
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 			-fomit-frame-pointer -ffunction-sections \
@@ -22,9 +22,9 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
 
-# Wir fügen hier explizit den Standard-Lib-Pfad von libctru hinzu
+# Der Trick: Wir sagen dem Linker explizit, wo er die Startup-Objekte findet
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LDFLAGS	+=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib) -L$(DEVKITPRO)/libctru/lib
+LDFLAGS += -L$(CTRU_LIB_PATH) -L$(DEVKITPRO)/libctru/lib
 
 LIBS	:= -lctru -lm
 
@@ -42,7 +42,7 @@ SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 
 export OFILES	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
 export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+					-I$(DEVKITPRO)/libctru/include \
 					-I$(CURDIR)/$(BUILD)
 
 .PHONY: $(BUILD) clean all
@@ -64,7 +64,8 @@ DEPENDS	:=	$(OFILES:.o=.d)
 $(OUTPUT).3dsx	:	$(OUTPUT).elf
 $(OUTPUT).elf	:	$(OFILES)
 	@echo linking $(notdir $@)
-	$(CXX) $(LDFLAGS) $(OFILES) $(LIBS) -o $@
+	# Hier fügen wir den Pfad zur crt0 manuell hinzu, falls der Linker sie nicht findet
+	$(CXX) $(LDFLAGS) $(OFILES) -L$(CTRU_LIB_PATH) $(LIBS) -o $@
 
 %.o: %.cpp
 	@echo $(notdir $<)
