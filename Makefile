@@ -22,19 +22,15 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
 
-# Startfile-Pfad robust über GCC ermitteln (-B statt -L, da .o kein Library-Pfad ist)
-CRT0_PATH	:=	$(shell arm-none-eabi-gcc -print-file-name=3dsx_crt0.o 2>/dev/null)
+# 3dsx_crt0.o per find im gesamten devkitpro-Baum suchen (zuverlässiger als gcc -print-file-name)
+CRT0_PATH	:=	$(shell find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null | head -1)
 
-ifeq ($(CRT0_PATH),3dsx_crt0.o)
-  # GCC hat die Datei nicht in seinen Suchpfaden gefunden – manueller Fallback
-  $(warning "WARNUNG: 3dsx_crt0.o nicht in GCC-Suchpfaden, suche manuell...")
-  CRT0_PATH := $(firstword $(wildcard \
-    /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/*/3dsx_crt0.o \
-    /opt/devkitpro/libctru/lib/3dsx_crt0.o \
-  ))
+ifeq ($(CRT0_PATH),)
+  $(error "FEHLER: 3dsx_crt0.o nicht gefunden! Bitte 3ds-dev installieren: dkp-pacman -S 3ds-dev")
 endif
 
 CRT0_DIR	:=	$(dir $(CRT0_PATH))
+$(info 3dsx_crt0.o gefunden: $(CRT0_PATH))
 
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LDFLAGS	+=	-B$(CRT0_DIR)
