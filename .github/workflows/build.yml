@@ -1,4 +1,5 @@
 name: Build DarkFox-3DS
+
 on:
   push:
     branches: [ main ]
@@ -7,16 +8,35 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: devkitpro/devkitarm:latest
+    container:
+      image: devkitpro/devkitarm:latest
+      # Umgebungsvariablen aus dem Container explizit weitergeben
+      env:
+        DEVKITPRO: /opt/devkitpro
+        DEVKITARM: /opt/devkitpro/devkitARM
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Umgebung prüfen & PATH setzen
         run: |
-          # Falls der Server 403 wirft, versuchen wir es ohne -Syu.
-          # Die wichtigsten 3DS-Tools sind im Container meist schon vorhanden.
-          sudo dkp-pacman -S --noconfirm 3ds-dev || echo "Pacman failed, attempting build with pre-installed tools..."
+          export PATH="$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH"
+          echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH" >> $GITHUB_ENV
+          echo "=== GCC Version ==="
+          arm-none-eabi-gcc --version
+          echo "=== crt0 Pfad ==="
+          arm-none-eabi-gcc -print-file-name=3dsx_crt0.o
+          echo "=== Startfile-Suchpfade ==="
+          arm-none-eabi-gcc -print-search-dirs | head -5
+
+      - name: 3DS-Dev-Tools installieren
+        run: |
+          # Pakete installieren; Fehler abfangen falls schon vorhanden
+          dkp-pacman -S --noconfirm 3ds-dev 2>&1 || echo "3ds-dev bereits installiert oder Paketserver nicht erreichbar – fahre fort."
+          # Prüfen ob die wichtigsten Dateien vorhanden sind
+          echo "=== libctru prüfen ==="
+          ls /opt/devkitpro/libctru/lib/ | grep -E "(crt0|ctru)" || echo "WARNUNG: libctru-Dateien nicht gefunden!"
 
       - name: Build project
         run: |
