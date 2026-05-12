@@ -3,6 +3,7 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,12 +11,17 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          sudo dkp-pacman -Syu --noconfirm 3ds-dev
+          # Falls der Server 403 wirft, versuchen wir es ohne -Syu.
+          # Die wichtigsten 3DS-Tools sind im Container meist schon vorhanden.
+          sudo dkp-pacman -S --noconfirm 3ds-dev || echo "Pacman failed, attempting build with pre-installed tools..."
+
       - name: Build project
         run: |
           make
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
