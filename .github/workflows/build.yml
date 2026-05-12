@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: devkitpro/devkitarm:latest
+      image: devkitpro/devkitarm:20240202
       env:
         DEVKITPRO: /opt/devkitpro
         DEVKITARM: /opt/devkitpro/devkitARM
@@ -22,29 +22,16 @@ jobs:
         run: |
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Diagnose (vor Installation)
+      - name: Verifikation
         run: |
-          echo "=== 3dsx_crt0.o suchen ==="
-          find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null || echo "NICHT GEFUNDEN"
-          echo "=== Installierte 3DS-Pakete ==="
-          dkp-pacman -Q 2>/dev/null | grep -iE "3ds|ctru" || echo "Keine 3DS-Pakete"
-          echo "=== libctru/lib ==="
-          ls /opt/devkitpro/libctru/lib/ 2>/dev/null || echo "Verzeichnis fehlt"
-
-      - name: 3DS-Dev-Tools installieren
-        run: |
-          # Paketdatenbank aktualisieren, dann 3ds-dev installieren
-          dkp-pacman -Sy --noconfirm
-          dkp-pacman -S --noconfirm 3ds-dev
-
-          # Harter Verifikations-Check - bricht den Build ab wenn crt0 fehlt
-          echo "=== Verifikation ==="
-          find /opt/devkitpro -name "3dsx_crt0.o" | grep . \
-            || { echo "FEHLER: 3dsx_crt0.o nach Installation nicht gefunden!"; exit 1; }
+          echo "=== 3dsx_crt0.o ==="
+          find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null \
+            || { echo "FEHLER: 3dsx_crt0.o nicht gefunden!"; exit 1; }
+          echo "=== arm-none-eabi-g++ ==="
+          arm-none-eabi-g++ --version
 
       - name: Build project
-        run: |
-          make
+        run: make
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
