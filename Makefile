@@ -9,7 +9,7 @@ BUILD		:=	build
 SOURCES		:=	source
 INCLUDES	:=	include
 
-# Wir definieren den Pfad zur libctru absolut
+# Pfad zur libctru
 CTRU_LIB_PATH := /opt/devkitpro/libctru/lib
 
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
@@ -22,9 +22,23 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
 
-# Der Trick: Wir sagen dem Linker explizit, wo er die Startup-Objekte findet
+# Startfile-Pfad robust über GCC ermitteln (-B statt -L, da .o kein Library-Pfad ist)
+CRT0_PATH	:=	$(shell arm-none-eabi-gcc -print-file-name=3dsx_crt0.o 2>/dev/null)
+
+ifeq ($(CRT0_PATH),3dsx_crt0.o)
+  # GCC hat die Datei nicht in seinen Suchpfaden gefunden – manueller Fallback
+  $(warning "WARNUNG: 3dsx_crt0.o nicht in GCC-Suchpfaden, suche manuell...")
+  CRT0_PATH := $(firstword $(wildcard \
+    /opt/devkitpro/devkitARM/lib/gcc/arm-none-eabi/*/3dsx_crt0.o \
+    /opt/devkitpro/libctru/lib/3dsx_crt0.o \
+  ))
+endif
+
+CRT0_DIR	:=	$(dir $(CRT0_PATH))
+
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LDFLAGS += -L$(CTRU_LIB_PATH) -L$(DEVKITPRO)/libctru/lib
+LDFLAGS	+=	-B$(CRT0_DIR)
+LDFLAGS	+=	-L$(CTRU_LIB_PATH) -L$(DEVKITPRO)/libctru/lib
 
 LIBS	:= -lctru -lm
 
@@ -62,10 +76,10 @@ else
 DEPENDS	:=	$(OFILES:.o=.d)
 
 $(OUTPUT).3dsx	:	$(OUTPUT).elf
+
 $(OUTPUT).elf	:	$(OFILES)
 	@echo linking $(notdir $@)
-	# Hier fügen wir den Pfad zur crt0 manuell hinzu, falls der Linker sie nicht findet
-	$(CXX) $(LDFLAGS) $(OFILES) -L$(CTRU_LIB_PATH) $(LIBS) -o $@
+	$(CXX) $(LDFLAGS) $(OFILES) $(LIBS) -o $@
 
 %.o: %.cpp
 	@echo $(notdir $<)
