@@ -12,6 +12,10 @@ INCLUDES	:=	include
 # Pfad zur libctru
 CTRU_LIB_PATH := /opt/devkitpro/libctru/lib
 
+# ARCH explizit setzen – libctru ist mit armv6k + hard-float VFP gebaut.
+# Ohne diese Flags entsteht ein ABI-Mismatch beim Linken ("uses VFP register arguments ... does not")
+ARCH	:=	-march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft
+
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
 			-fomit-frame-pointer -ffunction-sections \
 			$(ARCH)
@@ -22,7 +26,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
 
-# 3dsx_crt0.o per find im gesamten devkitpro-Baum suchen (zuverlässiger als gcc -print-file-name)
+# 3dsx_crt0.o per find im gesamten devkitpro-Baum suchen
 CRT0_PATH	:=	$(shell find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null | head -1)
 
 ifeq ($(CRT0_PATH),)
