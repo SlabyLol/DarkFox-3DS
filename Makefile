@@ -20,17 +20,20 @@ INCLUDES	:=	include
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
-ARCH	:=	-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+# Diese Variablen werden von 3ds_rules bereits korrekt gesetzt, 
+# wir passen hier nur die Definitionen für das Projekt an.
 
 CFLAGS	:=	-g -Wall -O2 -mword-relocations \
-			-fomit-frame-pointer -ffunction-sections \
-			$(ARCH)
+			-fomit-frame-pointer -ffunction-sections
 
-CFLAGS	+=	$(INCLUDE) -DARM11 -D_3DS
+# Ersetze -DARM11 -D_3DS durch -D__3DS__ wie von der Warnung empfohlen
+CFLAGS	+=	$(INCLUDE) -D__3DS__
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
 ASFLAGS	:=	-g $(ARCH)
+
+# WICHTIG: LDFLAGS muss die ARCH-Flags enthalten, damit der richtige Linker-Modus gewählt wird
 LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 LIBS	:= -lctru -lm
