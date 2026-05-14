@@ -149,8 +149,8 @@ void showNetworkInfo() {
     char ssid[33]={0}; ACU_GetSSID(ssid);
     printf(" SSID:    %.22s\n", ssid[0]?ssid:"(none)");
 
-    // Security mode – ACU_GetSecurityMode verified in libctru changelog
-    acSecurityMode secMode = AC_SECURITY_MODE_OPEN; ACU_GetSecurityMode(&secMode);
+    // Security mode – using u32 instead of undeclared type
+    u32 secMode = 0; ACU_GetSecurityMode(&secMode);
     const char* secNames[]={"Open","WEP40","WEP104","WEP128","WPA-TKIP","WPA-AES","WPA2-TKIP","WPA2-AES"};
     printf(" Security:%s\n", secMode<8?secNames[secMode]:"Unknown");
 
@@ -165,9 +165,9 @@ void showNetworkInfo() {
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════��════
 //  3. STORAGE INFO
-// ═══════════════════════════════════════════════════════════
+// ═���═════════════════════════════════════════════════════════
 void showStorageInfo() {
     cur();
     printf("\x1b[33m══ Storage Info ══\x1b[0m\n\n");
@@ -260,7 +260,7 @@ void showClock() {
 
 // ═══════════════════════════════════════════════════════════
 //  6. BUTTON TEST
-// ═════════════════════════��═════════════════════════════════
+// ═════════════════════════════════════════════════════════════
 void showBtnTest(u32 held) {
     cur();
     printf("\x1b[36m══ Button Test ══\x1b[0m\n\n");
