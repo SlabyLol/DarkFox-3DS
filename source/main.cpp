@@ -14,7 +14,7 @@ enum MenuState {
     LED_FUN, MINI_GAME, NETWORK_INFO, HARDWARE_TEST,
     CLOCK_SCREEN, STORAGE_INFO, BUTTON_TEST, ABOUT
 };
-
+void showClock();
 // ─── Hilfsfunktionen ───────────────────────────────────────────────────────
 void resetCursor() { printf("\x1b[H"); }
 void fullClear()   { consoleClear(); }
