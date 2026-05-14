@@ -149,10 +149,10 @@ void showNetworkInfo() {
     char ssid[33]={0}; ACU_GetSSID(ssid);
     printf(" SSID:    %.22s\n", ssid[0]?ssid:"(none)");
 
-    // Security mode – using acSecurityMode type for proper API compatibility
-    acSecurityMode secMode = (acSecurityMode)0; ACU_GetSecurityMode(&secMode);
+    // Security mode – ACU_GetSecurityMode verified in libctru changelog
+    u32 secMode=0; ACU_GetSecurityMode(&secMode);
     const char* secNames[]={"Open","WEP40","WEP104","WEP128","WPA-TKIP","WPA-AES","WPA2-TKIP","WPA2-AES"};
-    printf(" Security:%s\n", (int)secMode<8?secNames[(int)secMode]:"Unknown");
+    printf(" Security:%s\n", secMode<8?secNames[secMode]:"Unknown");
 
     // Proxy – ACU_GetProxyEnable verified in libctru changelog
     bool proxyEn=false; ACU_GetProxyEnable(&proxyEn);
@@ -165,9 +165,9 @@ void showNetworkInfo() {
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 //  3. STORAGE INFO
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 void showStorageInfo() {
     cur();
     printf("\x1b[33m══ Storage Info ══\x1b[0m\n\n");
@@ -175,7 +175,7 @@ void showStorageInfo() {
     // FSUSER_GetArchiveResource – verified in libctru fs.h search result
     FS_ArchiveResource sdR={0}, nandR={0};
     FSUSER_GetArchiveResource(&sdR,   SYSTEM_MEDIATYPE_SD);
-    FSUSER_GetArchiveResource(&nandR, SYSTEM_MEDIATYPE_CTR_NAND);
+    FSUSER_GetArchiveResource(&nandR, SYSTEM_MEDIATYPE_NAND);
 
     u64 sdTot  =(u64)sdR.totalClusters  *sdR.clusterSize;
     u64 sdFree =(u64)sdR.freeClusters   *sdR.clusterSize;
@@ -260,7 +260,7 @@ void showClock() {
 
 // ═══════════════════════════════════════════════════════════
 //  6. BUTTON TEST
-// ═════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
 void showBtnTest(u32 held) {
     cur();
     printf("\x1b[36m══ Button Test ══\x1b[0m\n\n");
