@@ -150,7 +150,7 @@ void showNetworkInfo() {
     printf(" SSID:    %.22s\n", ssid[0]?ssid:"(none)");
 
     // Security mode – ACU_GetSecurityMode verified in libctru changelog
-    u32 secMode=0; ACU_GetSecurityMode(&secMode);
+    acSecurityMode secMode=0; ACU_GetSecurityMode(&secMode);
     const char* secNames[]={"Open","WEP40","WEP104","WEP128","WPA-TKIP","WPA-AES","WPA2-TKIP","WPA2-AES"};
     printf(" Security:%s\n", secMode<8?secNames[secMode]:"Unknown");
 
@@ -175,7 +175,7 @@ void showStorageInfo() {
     // FSUSER_GetArchiveResource – verified in libctru fs.h search result
     FS_ArchiveResource sdR={0}, nandR={0};
     FSUSER_GetArchiveResource(&sdR,   SYSTEM_MEDIATYPE_SD);
-    FSUSER_GetArchiveResource(&nandR, SYSTEM_MEDIATYPE_NAND);
+    FSUSER_GetArchiveResource(&nandR, SYSTEM_MEDIATYPE_INTERNAL);
 
     u64 sdTot  =(u64)sdR.totalClusters  *sdR.clusterSize;
     u64 sdFree =(u64)sdR.freeClusters   *sdR.clusterSize;
