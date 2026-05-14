@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
 
     mcuHwcInit();
     ptmuInit();
-    acuInit();
+    acInit();
 
     int selected = 0;
     int subSelected = 0;
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
                         case 4: r=255; g=255; b=255; break;
                         case 5: break;
                     }
-                    MCUHWC_SetInfoLEDPattern(r, g, b);
+                    MCUHWC_SetWifiLedState(r > 0 || g > 0 || b > 0);
                 }
             }
             else if (state == MINI_GAME) {
@@ -216,7 +216,7 @@ int main(int argc, char* argv[]) {
         gspWaitForVBlank();
     }
 
-    acuExit();
+    acExit();
     ptmuExit();
     mcuHwcExit();
     gfxExit();
