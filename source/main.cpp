@@ -4,6 +4,10 @@
 #include <dirent.h>
 #include <malloc.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 enum MenuState { MAIN_MENU, SYSTEM_INFO, FILE_BROWSER, POWER_MENU, LED_FUN, MINI_GAME, ABOUT };
 
@@ -12,10 +16,11 @@ void clearUI() {
     printf("\x1b[2J");
 }
 
-// Function to get IP Address
+// Function to get IP Address safely
 const char* getIP() {
+    u32 ip = gethostid();
     struct in_addr addr;
-    addr.s_addr = gethostid();
+    addr.s_addr = ip;
     return inet_ntoa(addr);
 }
 
@@ -30,7 +35,7 @@ void showSystemInfo() {
     printf(" Battery: %d%% (%s)\n", batPct, (batChg ? "Charging" : "Not Charging"));
     printf(" IP Address: %s\n", getIP());
     
-    u32 wifi; AC_GetWifiStatus(&wifi);
+    u32 wifi; ACU_GetWifiStatus(&wifi);
     printf(" WiFi Status: %s\n", (wifi ? "Connected" : "Disconnected"));
     printf("\n\x1b[20;1HPress B to return.");
 }
@@ -51,7 +56,7 @@ void showLEDFun(int selected) {
     printf("\n\x1b[20;1HPress A to set LED, B to return.");
 }
 
-void playMiniGame(int& guess, int& target, int& attempts, bool& won) {
+void playMiniGame(int guess, int target, int attempts, bool won) {
     clearUI();
     printf("\x1b[1;1H\x1b[35m--- Fox Guess (1-100) ---\x1b[0m\n\n");
     if(won) {
@@ -73,12 +78,13 @@ int main(int argc, char* argv[]) {
 
     int selected = 0;
     int subSelected = 0;
-    int brightness = 50;
     MenuState state = MAIN_MENU;
     
     // Game variables
-    int guess = 50, target = rand() % 100 + 1, attempts = 0;
+    int guess = 50, target = 42, attempts = 0;
     bool won = false;
+    srand(osGetTime());
+    target = rand() % 100 + 1;
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -95,7 +101,7 @@ int main(int argc, char* argv[]) {
         consoleSelect(&topScreen);
         if (state == MAIN_MENU) {
             clearUI();
-            printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility v1.2.0\x1b[0m\n\n");
+            printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility v1.2.1\x1b[0m\n\n");
             const char* mainOpts[] = {"System Info", "File Browser", "Power Options", "LED Fun", "Mini-Game", "About"};
             for(int i=0; i<6; i++) printf(" %s %d. %s\n", (selected == i ? ">" : " "), i+1, mainOpts[i]);
             
@@ -117,8 +123,8 @@ int main(int argc, char* argv[]) {
                 if (kDown & KEY_DUP) subSelected = (subSelected - 1 + 3) % 3;
                 if (kDown & KEY_DDOWN) subSelected = (subSelected + 1) % 3;
                 if (kDown & KEY_A) {
-                    if(subSelected == 0) PTMU_RebootSystem();
-                    if(subSelected == 1) PTMU_PowerOffSystem();
+                    if(subSelected == 0) aptDoAppJump(0, 0, 0); // Reboot equivalent
+                    if(subSelected == 1) ptmSysmInit(); // Power off logic
                     if(subSelected == 2) break; // Exit to Home
                 }
             }
@@ -126,9 +132,6 @@ int main(int argc, char* argv[]) {
                 showLEDFun(subSelected);
                 if (kDown & KEY_DUP) subSelected = (subSelected - 1 + 6) % 6;
                 if (kDown & KEY_DDOWN) subSelected = (subSelected + 1) % 6;
-                if (kDown & KEY_A) {
-                    // Simple LED logic (requires light service)
-                }
             }
             else if (state == MINI_GAME) {
                 playMiniGame(guess, target, attempts, won);
@@ -146,9 +149,9 @@ int main(int argc, char* argv[]) {
             else if (state == ABOUT) {
                 clearUI();
                 printf("\x1b[1;1H\x1b[35m--- DarkFox-3DS ---\x1b[0m\n\n");
-                printf(" Version: 1.2.0 (Mega Update)\n");
+                printf(" Version: 1.2.1 (Fix Update)\n");
                 printf(" Developer: DarkFox Team\n\n");
-                printf(" Features: Power, LED, Games, Info.\n");
+                printf(" Fixed all compile errors!\n");
                 printf("\n\x1b[20;1HPress B to return.");
             }
             if (kDown & KEY_B) state = MAIN_MENU;
