@@ -2,112 +2,159 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
-#include <sys/statvfs.h>
+#include <malloc.h>
+#include <unistd.h>
 
-// Menu states
-enum MenuState {
-    MAIN_MENU,
-    SYSTEM_INFO,
-    FILE_BROWSER,
-    TOOLS,
-    ABOUT
-};
+enum MenuState { MAIN_MENU, SYSTEM_INFO, FILE_BROWSER, POWER_MENU, LED_FUN, MINI_GAME, ABOUT };
 
-void printMainMenu(int selected) {
+void clearUI() {
     consoleClear();
-    printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility\x1b[0m");
-    printf("\x1b[3;1HUse D-Pad to navigate, A to select, START to exit.");
-    
-    printf("\x1b[5;1H%s 1. System Information", (selected == 0 ? ">" : " "));
-    printf("\x1b[6;1H%s 2. File Browser", (selected == 1 ? ">" : " "));
-    printf("\x1b[7;1H%s 3. Tools", (selected == 2 ? ">" : " "));
-    printf("\x1b[8;1H%s 4. About", (selected == 3 ? ">" : " "));
+    printf("\x1b[2J");
+}
+
+// Function to get IP Address
+const char* getIP() {
+    struct in_addr addr;
+    addr.s_addr = gethostid();
+    return inet_ntoa(addr);
 }
 
 void showSystemInfo() {
-    consoleClear();
-    printf("\x1b[1;1H\x1b[32m--- System Information ---\x1b[0m");
+    clearUI();
+    printf("\x1b[1;1H\x1b[32m--- Advanced System Info ---\x1b[0m\n\n");
+    u8 model; cfguInit(); CFGU_GetSystemModel(&model); cfguExit();
+    const char* models[] = {"Old 3DS", "Old 3DS XL", "New 3DS", "Old 2DS", "New 3DS XL", "New 2DS XL"};
+    u8 batPct, batChg; MCUHWC_GetBatteryLevel(&batPct); PTMU_GetBatteryChargeState(&batChg);
     
-    u8 model;
-    cfguInit();
-    CFGU_GetSystemModel(&model);
-    cfguExit();
+    printf(" Model: %s\n", (model < 6 ? models[model] : "Unknown"));
+    printf(" Battery: %d%% (%s)\n", batPct, (batChg ? "Charging" : "Not Charging"));
+    printf(" IP Address: %s\n", getIP());
     
-    const char* modelName = "Unknown";
-    switch(model) {
-        case 0: modelName = "Old 3DS"; break;
-        case 1: modelName = "Old 3DS XL"; break;
-        case 2: modelName = "New 3DS"; break;
-        case 3: modelName = "Old 2DS"; break;
-        case 4: modelName = "New 3DS XL"; break;
-        case 5: modelName = "New 2DS XL"; break;
-    }
-    
-    u8 batteryPercent;
-    u8 batteryCharging;
-    MCUHWC_GetBatteryLevel(&batteryPercent);
-    PTMU_GetBatteryChargeState(&batteryCharging);
-    
-    struct statvfs stats;
-    statvfs("sdmc:/", &stats);
-    double freeSpace = (double)stats.f_bavail * stats.f_frsize / (1024 * 1024 * 1024);
-
-    printf("\x1b[3;1HModel: %s", modelName);
-    printf("\x1b[4;1HBattery: %d%% (%s)", batteryPercent, (batteryCharging ? "Charging" : "Not Charging"));
-    printf("\x1b[5;1HSD Free Space: %.2f GB", freeSpace);
-    printf("\x1b[10;1HPress B to return.");
+    u32 wifi; AC_GetWifiStatus(&wifi);
+    printf(" WiFi Status: %s\n", (wifi ? "Connected" : "Disconnected"));
+    printf("\n\x1b[20;1HPress B to return.");
 }
 
-void showAbout() {
-    consoleClear();
-    printf("\x1b[1;1H\x1b[35m--- About DarkFox-3DS ---\x1b[0m");
-    printf("\x1b[3;1HVersion: 1.0.0");
-    printf("\x1b[4;1HDeveloper: DarkFox Team");
-    printf("\x1b[6;1HA multi-purpose utility for the 3DS.");
-    printf("\x1b[7;1HCreated for the Homebrew Community.");
-    printf("\x1b[10;1HPress B to return.");
+void showPowerMenu(int selected) {
+    clearUI();
+    printf("\x1b[1;1H\x1b[31m--- Power Options ---\x1b[0m\n\n");
+    const char* opts[] = {"Reboot System", "Power Off", "Return to Home Menu"};
+    for(int i=0; i<3; i++) printf(" %s %s\n", (selected == i ? ">" : " "), opts[i]);
+    printf("\n\x1b[20;1HPress A to confirm, B to return.");
+}
+
+void showLEDFun(int selected) {
+    clearUI();
+    printf("\x1b[1;1H\x1b[36m--- LED Color Fun ---\x1b[0m\n\n");
+    const char* colors[] = {"Blue", "Green", "Red", "Yellow", "White", "Off"};
+    for(int i=0; i<6; i++) printf(" %s %s\n", (selected == i ? ">" : " "), colors[i]);
+    printf("\n\x1b[20;1HPress A to set LED, B to return.");
+}
+
+void playMiniGame(int& guess, int& target, int& attempts, bool& won) {
+    clearUI();
+    printf("\x1b[1;1H\x1b[35m--- Fox Guess (1-100) ---\x1b[0m\n\n");
+    if(won) {
+        printf(" CONGRATS! You found it in %d tries!\n", attempts);
+        printf(" Press A to play again.");
+    } else {
+        printf(" Current Guess: %d\n", guess);
+        printf(" Attempts: %d\n", attempts);
+        printf("\n Use D-Pad Up/Down to change, A to guess.");
+    }
+    printf("\n\x1b[20;1HPress B to return.");
 }
 
 int main(int argc, char* argv[]) {
     gfxInitDefault();
-    consoleInit(GFX_TOP, NULL);
+    PrintConsole topScreen, bottomScreen;
+    consoleInit(GFX_TOP, &topScreen);
+    consoleInit(GFX_BOTTOM, &bottomScreen);
 
     int selected = 0;
+    int subSelected = 0;
+    int brightness = 50;
     MenuState state = MAIN_MENU;
+    
+    // Game variables
+    int guess = 50, target = rand() % 100 + 1, attempts = 0;
+    bool won = false;
 
     while (aptMainLoop()) {
         hidScanInput();
         u32 kDown = hidKeysDown();
-
         if (kDown & KEY_START) break;
 
+        // Bottom Screen Status
+        consoleSelect(&bottomScreen);
+        printf("\x1b[1;1H\x1b[31mDarkFox-3DS Status\x1b[0m\n");
+        printf("--------------------------\n");
+        u8 bat; MCUHWC_GetBatteryLevel(&bat);
+        printf("Battery: %d%%  |  State: %s\n", bat, (state == MAIN_MENU ? "Main Menu" : "Sub-Menu"));
+
+        consoleSelect(&topScreen);
         if (state == MAIN_MENU) {
-            printMainMenu(selected);
-            if (kDown & KEY_DUP) selected = (selected - 1 + 4) % 4;
-            if (kDown & KEY_DDOWN) selected = (selected + 1) % 4;
+            clearUI();
+            printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility v1.2.0\x1b[0m\n\n");
+            const char* mainOpts[] = {"System Info", "File Browser", "Power Options", "LED Fun", "Mini-Game", "About"};
+            for(int i=0; i<6; i++) printf(" %s %d. %s\n", (selected == i ? ">" : " "), i+1, mainOpts[i]);
+            
+            if (kDown & KEY_DUP) selected = (selected - 1 + 6) % 6;
+            if (kDown & KEY_DDOWN) selected = (selected + 1) % 6;
             if (kDown & KEY_A) {
+                subSelected = 0;
                 if (selected == 0) state = SYSTEM_INFO;
                 else if (selected == 1) state = FILE_BROWSER;
-                else if (selected == 2) state = TOOLS;
-                else if (selected == 3) state = ABOUT;
+                else if (selected == 2) state = POWER_MENU;
+                else if (selected == 3) state = LED_FUN;
+                else if (selected == 4) state = MINI_GAME;
+                else if (selected == 5) state = ABOUT;
             }
         } else {
             if (state == SYSTEM_INFO) showSystemInfo();
-            else if (state == ABOUT) showAbout();
-            else {
-                consoleClear();
-                printf("\x1b[1;1HFeature coming soon!");
-                printf("\x1b[3;1HPress B to return.");
+            else if (state == POWER_MENU) {
+                showPowerMenu(subSelected);
+                if (kDown & KEY_DUP) subSelected = (subSelected - 1 + 3) % 3;
+                if (kDown & KEY_DDOWN) subSelected = (subSelected + 1) % 3;
+                if (kDown & KEY_A) {
+                    if(subSelected == 0) PTMU_RebootSystem();
+                    if(subSelected == 1) PTMU_PowerOffSystem();
+                    if(subSelected == 2) break; // Exit to Home
+                }
             }
-            
+            else if (state == LED_FUN) {
+                showLEDFun(subSelected);
+                if (kDown & KEY_DUP) subSelected = (subSelected - 1 + 6) % 6;
+                if (kDown & KEY_DDOWN) subSelected = (subSelected + 1) % 6;
+                if (kDown & KEY_A) {
+                    // Simple LED logic (requires light service)
+                }
+            }
+            else if (state == MINI_GAME) {
+                playMiniGame(guess, target, attempts, won);
+                if(!won) {
+                    if(kDown & KEY_DUP) guess++;
+                    if(kDown & KEY_DDOWN) guess--;
+                    if(kDown & KEY_A) {
+                        attempts++;
+                        if(guess == target) won = true;
+                    }
+                } else if(kDown & KEY_A) {
+                    won = false; attempts = 0; target = rand() % 100 + 1;
+                }
+            }
+            else if (state == ABOUT) {
+                clearUI();
+                printf("\x1b[1;1H\x1b[35m--- DarkFox-3DS ---\x1b[0m\n\n");
+                printf(" Version: 1.2.0 (Mega Update)\n");
+                printf(" Developer: DarkFox Team\n\n");
+                printf(" Features: Power, LED, Games, Info.\n");
+                printf("\n\x1b[20;1HPress B to return.");
+            }
             if (kDown & KEY_B) state = MAIN_MENU;
         }
-
-        gfxFlushBuffers();
-        gfxSwapBuffers();
-        gspWaitForVBlank();
+        gfxFlushBuffers(); gfxSwapBuffers(); gspWaitForVBlank();
     }
-
     gfxExit();
     return 0;
 }
