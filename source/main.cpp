@@ -80,44 +80,28 @@ void showStorageInfo() {
     resetCursor();
     printf("\x1b[33m=== Storage Info ===\x1b[0m\n\n");
 
-    // FSUSER_GetArchiveResource ist die korrekte Funktion
     FS_ArchiveResource sdRes={0}, nandRes={0};
-    FSUSER_GetArchiveResource(&sdRes,   SYSTEM_MEDIATYPE_SD);
-    FSUSER_GetArchiveResource(&nandRes, SYSTEM_MEDIATYPE_NAND);
+    
+    // SD-Karte abfragen
+    FSUSER_GetArchiveResource(&sdRes, SYSTEM_MEDIATYPE_SD);
+    // NAND abfragen (hier lag der Fehler)
+    FSUSER_GetArchiveResource(&nandRes, MEDIATYPE_NAND);
 
-    u64 sdTotal  = (u64)sdRes.totalClusters   * sdRes.clusterSize;
-    u64 sdFree   = (u64)sdRes.freeClusters    * sdRes.clusterSize;
-    u64 nandTotal= (u64)nandRes.totalClusters * nandRes.clusterSize;
-    u64 nandFree = (u64)nandRes.freeClusters  * nandRes.clusterSize;
+    u64 sdTotal   = (u64)sdRes.totalClusters   * sdRes.clusterSize;
+    u64 sdFree    = (u64)sdRes.freeClusters    * sdRes.clusterSize;
+    u64 nandTotal = (u64)nandRes.totalClusters * nandRes.clusterSize;
+    u64 nandFree  = (u64)nandRes.freeClusters  * nandRes.clusterSize;
 
-    int sdPct = sdTotal>0?(int)(100-(sdFree*100/sdTotal)):0;
+    int sdPct = sdTotal > 0 ? (int)(100 - (sdFree * 100 / sdTotal)) : 0;
 
     printf(" SD Card:\n");
     printf("  Total: %-18s\n", fmtSize(sdTotal));
     printf("  Free:  %-18s\n", fmtSize(sdFree));
-    printf("  Used:  %-18s\n", fmtSize(sdTotal-sdFree));
-    printf("  [");
-    for(int i=0;i<20;i++) printf(i<sdPct/5?"#":"-");
-    printf("] %d%%\n\n", sdPct);
+    printf("  Used:  %-18s [%d%%]\n\n", fmtSize(sdTotal - sdFree), sdPct);
 
     printf(" NAND:\n");
     printf("  Total: %-18s\n", fmtSize(nandTotal));
     printf("  Free:  %-18s\n", fmtSize(nandFree));
-    printf("\n\x1b[20;1HPress B to return.");
-}
-
-// ─── Clock ─────────────────────────────────────────────────────────────────
-void showClock() {
-    resetCursor();
-    printf("\x1b[35m=== Clock & Date ===\x1b[0m\n\n");
-    u64 ms=osGetTime(); time_t sec=(time_t)(ms/1000);
-    struct tm* t=gmtime(&sec);
-    const char* days[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-    printf("  Date:   %04d-%02d-%02d (%s)\n\n",
-           t->tm_year+1900,t->tm_mon+1,t->tm_mday,days[t->tm_wday]);
-    printf("  \x1b[32m%02d:%02d:%02d\x1b[0m UTC\n\n",
-           t->tm_hour,t->tm_min,t->tm_sec);
-    printf("  Uptime: %llu s\n", (unsigned long long)(ms/1000));
     printf("\n\x1b[20;1HPress B to return.");
 }
 
