@@ -150,7 +150,7 @@ void showNetworkInfo() {
     printf(" SSID:    %.22s\n", ssid[0]?ssid:"(none)");
 
     // Security mode – using acSecurityMode type for proper API compatibility
-    acSecurityMode secMode = 0; ACU_GetSecurityMode(&secMode);
+    acSecurityMode secMode = (acSecurityMode)0; ACU_GetSecurityMode(&secMode);
     const char* secNames[]={"Open","WEP40","WEP104","WEP128","WPA-TKIP","WPA-AES","WPA2-TKIP","WPA2-AES"};
     printf(" Security:%s\n", (int)secMode<8?secNames[(int)secMode]:"Unknown");
 
