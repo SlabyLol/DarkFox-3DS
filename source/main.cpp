@@ -16,7 +16,6 @@ void clearUI() {
     printf("\x1b[2J");
 }
 
-// Function to get IP Address safely
 const char* getIP() {
     u32 ip = gethostid();
     struct in_addr addr;
@@ -43,7 +42,7 @@ void showSystemInfo() {
 void showPowerMenu(int selected) {
     clearUI();
     printf("\x1b[1;1H\x1b[31m--- Power Options ---\x1b[0m\n\n");
-    const char* opts[] = {"Reboot System", "Power Off", "Return to Home Menu"};
+    const char* opts[] = {"Return to Loader", "Power Off (Requires Service)", "Return to Home Menu"};
     for(int i=0; i<3; i++) printf(" %s %s\n", (selected == i ? ">" : " "), opts[i]);
     printf("\n\x1b[20;1HPress A to confirm, B to return.");
 }
@@ -80,7 +79,6 @@ int main(int argc, char* argv[]) {
     int subSelected = 0;
     MenuState state = MAIN_MENU;
     
-    // Game variables
     int guess = 50, target = 42, attempts = 0;
     bool won = false;
     srand(osGetTime());
@@ -91,7 +89,6 @@ int main(int argc, char* argv[]) {
         u32 kDown = hidKeysDown();
         if (kDown & KEY_START) break;
 
-        // Bottom Screen Status
         consoleSelect(&bottomScreen);
         printf("\x1b[1;1H\x1b[31mDarkFox-3DS Status\x1b[0m\n");
         printf("--------------------------\n");
@@ -101,7 +98,7 @@ int main(int argc, char* argv[]) {
         consoleSelect(&topScreen);
         if (state == MAIN_MENU) {
             clearUI();
-            printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility v1.2.1\x1b[0m\n\n");
+            printf("\x1b[1;1H\x1b[31mDarkFox-3DS Utility v1.2.2\x1b[0m\n\n");
             const char* mainOpts[] = {"System Info", "File Browser", "Power Options", "LED Fun", "Mini-Game", "About"};
             for(int i=0; i<6; i++) printf(" %s %d. %s\n", (selected == i ? ">" : " "), i+1, mainOpts[i]);
             
@@ -123,8 +120,7 @@ int main(int argc, char* argv[]) {
                 if (kDown & KEY_DUP) subSelected = (subSelected - 1 + 3) % 3;
                 if (kDown & KEY_DDOWN) subSelected = (subSelected + 1) % 3;
                 if (kDown & KEY_A) {
-                    if(subSelected == 0) aptDoAppJump(0, 0, 0); // Reboot equivalent
-                    if(subSelected == 1) ptmSysmInit(); // Power off logic
+                    if(subSelected == 0) break; // Exit to Loader
                     if(subSelected == 2) break; // Exit to Home
                 }
             }
@@ -149,9 +145,9 @@ int main(int argc, char* argv[]) {
             else if (state == ABOUT) {
                 clearUI();
                 printf("\x1b[1;1H\x1b[35m--- DarkFox-3DS ---\x1b[0m\n\n");
-                printf(" Version: 1.2.1 (Fix Update)\n");
+                printf(" Version: 1.2.2 (Final Fix)\n");
                 printf(" Developer: DarkFox Team\n\n");
-                printf(" Fixed all compile errors!\n");
+                printf(" Everything should work now!\n");
                 printf("\n\x1b[20;1HPress B to return.");
             }
             if (kDown & KEY_B) state = MAIN_MENU;
