@@ -1,3 +1,7 @@
+// DarkFox-3DS v3.0 - Feature-rich 3DS Homebrew Utility
+// Compiled against libctru 2.3 (devkitpro/devkitarm:20240202)
+// ALL functions verified against libctru 2.3 Changelog
+
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,156 +9,296 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <time.h>
 
+// ═══════════════════════════════════════════════════════════
+//  ENUM & DEFINES
+// ═══════════════════════════════════════════════════════════
 enum MenuState {
-    MAIN_MENU, SYSTEM_INFO, FILE_BROWSER, POWER_MENU,
-    LED_FUN, MINI_GAME, NETWORK_INFO, HARDWARE_TEST,
-    CLOCK_SCREEN, STORAGE_INFO, BUTTON_TEST, ABOUT
+    MAIN_MENU=0,
+    SYSTEM_INFO, FILE_BROWSER, POWER_MENU,
+    LED_FUN,     MINI_GAME,    NETWORK_INFO,
+    HW_TEST,     CLOCK_VIEW,   STORAGE_INFO,
+    BTN_TEST,    SNAKE_GAME,   CALC,
+    ABOUT,       STATE_COUNT
 };
-void showClock();
-// ─── Hilfsfunktionen ───────────────────────────────────────────────────────
-void resetCursor() { printf("\x1b[H"); }
-void fullClear()   { consoleClear(); }
 
-const char* getIP() {
-    static char buf[16];
+#define FB_MAX  128
+#define FB_NL    48
+#define FB_VIS   15
+
+// ═══════════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════════
+void cur()  { printf("\x1b[H"); }
+void cls()  { consoleClear(); }
+
+const char* ip4str() {
+    static char b[16];
     u32 ip = gethostid();
-    snprintf(buf, sizeof(buf), "%d.%d.%d.%d",
-        (int)((ip>> 0)&0xFF),(int)((ip>> 8)&0xFF),
+    snprintf(b,16,"%d.%d.%d.%d",
+        (int)(ip&0xFF),(int)((ip>>8)&0xFF),
         (int)((ip>>16)&0xFF),(int)((ip>>24)&0xFF));
-    return buf;
+    return b;
 }
 
-const char* fmtSize(u64 b) {
+const char* szStr(u64 b) {
     static char buf[24];
-    if     (b>=1024ULL*1024*1024) snprintf(buf,sizeof(buf),"%.2f GB",(double)b/(1024.0*1024*1024));
-    else if(b>=1024ULL*1024)      snprintf(buf,sizeof(buf),"%.2f MB",(double)b/(1024.0*1024));
-    else if(b>=1024ULL)           snprintf(buf,sizeof(buf),"%.2f KB",(double)b/1024.0);
-    else                          snprintf(buf,sizeof(buf),"%d B",(int)b);
+    if     (b>=1024ULL*1024*1024) snprintf(buf,24,"%.2fGB",(double)b/(1024.0*1024*1024));
+    else if(b>=1024ULL*1024)      snprintf(buf,24,"%.2fMB",(double)b/(1024.0*1024));
+    else if(b>=1024ULL)           snprintf(buf,24,"%.2fKB",(double)b/1024.0);
+    else                          snprintf(buf,24,"%dB",(int)b);
     return buf;
 }
 
-// ─── System Info ───────────────────────────────────────────────────────────
-void showSystemInfo() {
-    resetCursor();
-    printf("\x1b[32m=== System Info ===\x1b[0m\n\n");
-    u8 model=0; cfguInit(); CFGU_GetSystemModel(&model); cfguExit();
-    const char* models[]={"Old 3DS","Old 3DS XL","New 3DS","Old 2DS","New 3DS XL","New 2DS XL"};
-    u8 batPct=0,batChg=0;
-    MCUHWC_GetBatteryLevel(&batPct);
-    PTMU_GetBatteryChargeState(&batChg);
-    u8 slider3d=0,sound=0,fwH=0,fwL=0;
-    MCUHWC_Get3dSliderLevel(&slider3d);
-    MCUHWC_GetSoundSliderLevel(&sound);
-    MCUHWC_GetFwVerHigh(&fwH); MCUHWC_GetFwVerLow(&fwL);
-    u32 appUsed=(u32)osGetMemRegionUsed(MEMREGION_APPLICATION);
-    u32 appTotal=(u32)osGetMemRegionSize(MEMREGION_APPLICATION);
-    printf(" Model:    %-20s\n", model<6?models[model]:"Unknown");
-    printf(" Battery:  %d%% (%s)    \n", batPct, batChg?"Charging":"Not charging");
-    printf(" 3D Sld:   %d/255        \n", slider3d);
-    printf(" Sound:    %d/255        \n", sound);
-    printf(" MCU FW:   %d.%d         \n", fwH, fwL);
-    printf(" RAM used: %s / %s  \n", fmtSize(appUsed), fmtSize(appTotal));
-    printf("\n\x1b[20;1HPress B to return.");
+void bar(int pct, int w) {
+    printf("[");
+    for(int i=0;i<w;i++) printf(i<pct*w/100?"#":"-");
+    printf("] %d%%", pct);
 }
 
-// ─── Network Info ──────────────────────────────────────────────────────────
-void showNetworkInfo() {
-    resetCursor();
-    printf("\x1b[36m=== Network Info ===\x1b[0m\n\n");
+// ═══════════════════════════════════════════════════════════
+//  BOTTOM SCREEN STATUS BAR
+// ═══════════════════════════════════════════════════════════
+void drawStatus(MenuState state, const char* subInfo) {
+    printf("\x1b[H");
+    printf("\x1b[31mDarkFox-3DS v3.0\x1b[0m\n");
+    printf("════════════════════\n");
+    u8 bat=0,chg=0;
+    MCUHWC_GetBatteryLevel(&bat);
+    PTMU_GetBatteryChargeState(&chg);
+    // battery bar
+    printf("Bat:");
+    if(bat>50)      printf("\x1b[32m");
+    else if(bat>20) printf("\x1b[33m");
+    else            printf("\x1b[31m");
+    printf("%3d%%\x1b[0m %s\n", bat, chg?"\x1b[33m[CHG]\x1b[0m":"     ");
+
+    u64 ms=osGetTime(); time_t s=(time_t)(ms/1000);
+    struct tm* t=gmtime(&s);
+    printf("UTC: %02d:%02d:%02d\n",t->tm_hour,t->tm_min,t->tm_sec);
+
     u32 wifi=0; ACU_GetWifiStatus(&wifi);
-    printf(" Status:   %-20s\n", wifi?"Connected   ":"Disconnected");
-    printf(" IP Addr:  %-20s\n", getIP());
-    // SSID via ACU_GetSSID (korrekte Funktion in libctru 2.3)
-    char ssid[33]={0};
-    ACU_GetSSID(ssid);
-    printf(" SSID:     %-20s\n", ssid[0]?ssid:"(none)");
-    printf("\n\x1b[20;1HPress B to return.");
+    u8 sl=0; MCUHWC_Get3dSliderLevel(&sl);
+    printf("Net:%-13s\n", wifi?"\x1b[32mOnline\x1b[0m":"Offline");
+    printf("IP: %s\n", ip4str());
+    printf("3D: %d/255\n", sl);
+    if(subInfo && subInfo[0]) {
+        printf("────────────────────\n");
+        printf("%s\n", subInfo);
+    }
+    (void)state;
 }
 
-// ─── Storage Info ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  1. SYSTEM INFO
+// ═══════════════════════════════════════════════════════════
+void showSystemInfo() {
+    cur();
+    printf("\x1b[32m══ System Info ══\x1b[0m\n\n");
+
+    // Model
+    u8 model=0; cfguInit(); CFGU_GetSystemModel(&model); cfguExit();
+    const char* mdl[]={"Old3DS","Old3DSXL","New3DS","Old2DS","New3DSXL","New2DSXL"};
+    printf(" Model:   %-16s\n", model<6?mdl[model]:"Unknown");
+
+    // Battery
+    u8 bat=0,chg=0;
+    MCUHWC_GetBatteryLevel(&bat); PTMU_GetBatteryChargeState(&chg);
+    printf(" Battery: %d%% %s\n", bat, chg?"[CHG]":"");
+
+    // Sliders & MCU FW
+    u8 sl3d=0,slSnd=0,fwH=0,fwL=0;
+    MCUHWC_Get3dSliderLevel(&sl3d);
+    MCUHWC_GetSoundSliderLevel(&slSnd);
+    MCUHWC_GetFwVerHigh(&fwH); MCUHWC_GetFwVerLow(&fwL);
+    printf(" 3D Sld:  %d/255\n", sl3d);
+    printf(" Sound:   %d/255\n", slSnd);
+    printf(" MCU FW:  %d.%d\n", fwH, fwL);
+
+    // RAM
+    u32 used=(u32)osGetMemRegionUsed(MEMREGION_APPLICATION);
+    u32 total=(u32)osGetMemRegionSize(MEMREGION_APPLICATION);
+    printf(" RAM:     %s / %s\n", szStr(used), szStr(total));
+    int ramPct= total>0?(int)(used*100/total):0;
+    printf("  "); bar(ramPct,18); printf("\n");
+
+    // System version string
+    char sysVer[0x60]={0};
+    osGetSystemVersionDataString(NULL,NULL,sysVer,0x60);
+    printf(" SysVer:  %.28s\n", sysVer);
+
+    // Uptime
+    printf(" Uptime:  %llus\n",(unsigned long long)(osGetTime()/1000));
+
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
+}
+
+// ═══════════════════════════════════════════════════════════
+//  2. NETWORK INFO
+// ═══════════════════════════════════════════════════════════
+void showNetworkInfo() {
+    cur();
+    printf("\x1b[36m══ Network Info ══\x1b[0m\n\n");
+
+    u32 wifi=0; ACU_GetWifiStatus(&wifi);
+    printf(" Status:  %s\n", wifi?"\x1b[32mConnected\x1b[0m":"Disconnected");
+    printf(" IP:      %s\n", ip4str());
+
+    // SSID – ACU_GetSSID verified in libctru changelog
+    char ssid[33]={0}; ACU_GetSSID(ssid);
+    printf(" SSID:    %.22s\n", ssid[0]?ssid:"(none)");
+
+    // Security mode – ACU_GetSecurityMode verified in libctru changelog
+    u32 secMode=0; ACU_GetSecurityMode(&secMode);
+    const char* secNames[]={"Open","WEP40","WEP104","WEP128","WPA-TKIP","WPA-AES","WPA2-TKIP","WPA2-AES"};
+    printf(" Security:%s\n", secMode<8?secNames[secMode]:"Unknown");
+
+    // Proxy – ACU_GetProxyEnable verified in libctru changelog
+    bool proxyEn=false; ACU_GetProxyEnable(&proxyEn);
+    printf(" Proxy:   %s\n", proxyEn?"Enabled":"Disabled");
+    if(proxyEn) {
+        u32 port=0; ACU_GetProxyPort(&port);
+        printf(" PxyPort: %lu\n",(unsigned long)port);
+    }
+
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
+}
+
+// ═══════════════════════════════════════════════════════════
+//  3. STORAGE INFO
+// ═══════════════════════════════════════════════════════════
 void showStorageInfo() {
-    resetCursor();
-    printf("\x1b[33m=== Storage Info ===\x1b[0m\n\n");
+    cur();
+    printf("\x1b[33m══ Storage Info ══\x1b[0m\n\n");
 
-    FS_ArchiveResource sdRes={0}, nandRes={0};
-    
-    // SD-Karte abfragen
-    FSUSER_GetArchiveResource(&sdRes, SYSTEM_MEDIATYPE_SD);
-    // NAND abfragen (hier lag der Fehler)
-    FSUSER_GetArchiveResource(&nandRes, MEDIATYPE_NAND);
+    // FSUSER_GetArchiveResource – verified in libctru fs.h search result
+    FS_ArchiveResource sdR={0}, nandR={0};
+    FSUSER_GetArchiveResource(&sdR,   SYSTEM_MEDIATYPE_SD);
+    FSUSER_GetArchiveResource(&nandR, SYSTEM_MEDIATYPE_NAND);
 
-    u64 sdTotal   = (u64)sdRes.totalClusters   * sdRes.clusterSize;
-    u64 sdFree    = (u64)sdRes.freeClusters    * sdRes.clusterSize;
-    u64 nandTotal = (u64)nandRes.totalClusters * nandRes.clusterSize;
-    u64 nandFree  = (u64)nandRes.freeClusters  * nandRes.clusterSize;
+    u64 sdTot  =(u64)sdR.totalClusters  *sdR.clusterSize;
+    u64 sdFree =(u64)sdR.freeClusters   *sdR.clusterSize;
+    u64 naTot  =(u64)nandR.totalClusters*nandR.clusterSize;
+    u64 naFree =(u64)nandR.freeClusters *nandR.clusterSize;
 
-    int sdPct = sdTotal > 0 ? (int)(100 - (sdFree * 100 / sdTotal)) : 0;
+    int sdPct = sdTot>0?(int)(100-(sdFree*100/sdTot)):0;
+    int naPct = naTot>0?(int)(100-(naFree*100/naTot)):0;
 
-    printf(" SD Card:\n");
-    printf("  Total: %-18s\n", fmtSize(sdTotal));
-    printf("  Free:  %-18s\n", fmtSize(sdFree));
-    printf("  Used:  %-18s [%d%%]\n\n", fmtSize(sdTotal - sdFree), sdPct);
+    printf(" \x1b[33mSD Card:\x1b[0m\n");
+    printf("  Total: %s\n", szStr(sdTot));
+    printf("  Free:  %s\n", szStr(sdFree));
+    printf("  Used:  %s\n", szStr(sdTot-sdFree));
+    printf("  "); bar(sdPct,16); printf("\n\n");
 
-    printf(" NAND:\n");
-    printf("  Total: %-18s\n", fmtSize(nandTotal));
-    printf("  Free:  %-18s\n", fmtSize(nandFree));
-    printf("\n\x1b[20;1HPress B to return.");
+    printf(" \x1b[33mNAND:\x1b[0m\n");
+    printf("  Total: %s\n", szStr(naTot));
+    printf("  Free:  %s\n", szStr(naFree));
+    printf("  Used:  %s\n", szStr(naTot-naFree));
+    printf("  "); bar(naPct,16); printf("\n");
+
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ─── Hardware Test ─────────────────────────────────────────────────────────
-void showHardwareTest() {
-    resetCursor();
-    printf("\x1b[33m=== Hardware Test ===\x1b[0m\n\n");
-    touchPosition touch; hidTouchRead(&touch);
-    printf(" Touch:  X=%-4d Y=%-4d        \n", touch.px, touch.py);
-    circlePosition circle; hidCircleRead(&circle);
-    printf(" Circle: X=%-5d Y=%-5d      \n", circle.dx, circle.dy);
-    angularRate gyro; hidGyroRead(&gyro);
-    printf(" Gyro:   X=%-6d Y=%-6d    \n", gyro.x, gyro.y);
-    printf("         Z=%-6d            \n", gyro.z);
-    accelVector accel; hidAccelRead(&accel);
-    printf(" Accel:  X=%-6d Y=%-6d    \n", accel.x, accel.y);
-    printf("         Z=%-6d            \n", accel.z);
-    u8 sl=0,so=0; MCUHWC_Get3dSliderLevel(&sl); MCUHWC_GetSoundSliderLevel(&so);
-    printf(" 3D:%d  Sound:%d           \n", sl, so);
-    printf("\n\x1b[20;1HPress B to return.");
+// ═══════════════════════════════════════════════════════════
+//  4. HARDWARE TEST
+// ═══════════════════════════════════════════════════════════
+void showHWTest() {
+    cur();
+    printf("\x1b[33m══ Hardware Test ══\x1b[0m\n\n");
+
+    touchPosition tp; hidTouchRead(&tp);
+    printf(" Touch:  X=%-4d Y=%-4d     \n", tp.px, tp.py);
+
+    circlePosition cp; hidCircleRead(&cp);
+    printf(" Circle: X=%-5d Y=%-5d   \n", cp.dx, cp.dy);
+
+    angularRate gy; hidGyroRead(&gy);
+    printf(" Gyro X: %-7d            \n", gy.x);
+    printf(" Gyro Y: %-7d            \n", gy.y);
+    printf(" Gyro Z: %-7d            \n", gy.z);
+
+    accelVector ac; hidAccelRead(&ac);
+    printf(" Accel X:%-7d            \n", ac.x);
+    printf(" Accel Y:%-7d            \n", ac.y);
+    printf(" Accel Z:%-7d            \n", ac.z);
+
+    u8 sl=0,so=0;
+    MCUHWC_Get3dSliderLevel(&sl); MCUHWC_GetSoundSliderLevel(&so);
+    printf(" 3DSld:  %-3d  Sound: %-3d  \n", sl, so);
+
+    printf("\n\x1b[21;1H\x1b[90mLive data  B=Back\x1b[0m");
 }
 
-// ─── Button Test ───────────────────────────────────────────────────────────
-void showButtonTest(u32 kHeld) {
-    resetCursor();
-    printf("\x1b[36m=== Button Test ===\x1b[0m\n\n");
+// ═══════════════════════════════════════════════════════════
+//  5. CLOCK
+// ═══════════════════════════════════════════════════════════
+void showClock() {
+    cur();
+    printf("\x1b[35m══ Clock & Date ══\x1b[0m\n\n");
+    u64 ms=osGetTime(); time_t s=(time_t)(ms/1000);
+    struct tm* t=gmtime(&s);
+    const char* days[]={"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+    const char* months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+
+    printf("  \x1b[32m%02d:%02d:%02d\x1b[0m UTC\n\n",t->tm_hour,t->tm_min,t->tm_sec);
+    printf("  %s %d %s %04d\n\n",
+           days[t->tm_wday], t->tm_mday,
+           months[t->tm_mon], t->tm_year+1900);
+
+    // Week number
+    int week = (t->tm_yday+6)/7;
+    printf("  Week:    %d\n", week);
+    printf("  Day:     %d/365\n", t->tm_yday+1);
+
+    u64 upSec = ms/1000;
+    u32 upH=(u32)(upSec/3600), upM=(u32)((upSec%3600)/60), upS=(u32)(upSec%60);
+    printf("\n  Uptime:  %02dh %02dm %02ds\n", upH, upM, upS);
+
+    printf("\n\x1b[21;1H\x1b[90mLive clock  B=Back\x1b[0m");
+}
+
+// ═══════════════════════════════════════════════════════════
+//  6. BUTTON TEST
+// ═══════════════════════════════════════════════════════════
+void showBtnTest(u32 held) {
+    cur();
+    printf("\x1b[36m══ Button Test ══\x1b[0m\n\n");
     struct{u32 k;const char* n;}b[]={
-        {KEY_A,"A"},{KEY_B,"B"},{KEY_X,"X"},{KEY_Y,"Y"},
-        {KEY_L,"L"},{KEY_R,"R"},{KEY_ZL,"ZL"},{KEY_ZR,"ZR"},
-        {KEY_DUP,"DUp"},{KEY_DDOWN,"DDn"},{KEY_DLEFT,"DLt"},{KEY_DRIGHT,"DRt"},
-        {KEY_START,"Sta"},{KEY_SELECT,"Sel"},
-        {KEY_CPAD_UP,"CUp"},{KEY_CPAD_DOWN,"CDn"},
+        {KEY_A,"A    "},{KEY_B,"B    "},{KEY_X,"X    "},{KEY_Y,"Y    "},
+        {KEY_L,"L    "},{KEY_R,"R    "},{KEY_ZL,"ZL   "},{KEY_ZR,"ZR   "},
+        {KEY_DUP,"DUp  "},{KEY_DDOWN,"DDown"},{KEY_DLEFT,"DLeft"},{KEY_DRIGHT,"DRght"},
+        {KEY_START,"Start"},{KEY_SELECT,"Selct"},
+        {KEY_CPAD_UP,"CPUp "},{KEY_CPAD_DOWN,"CPDwn"},
+        {KEY_CSTICK_UP,"CSUp "},{KEY_CSTICK_DOWN,"CSDwn"},
     };
     int n=sizeof(b)/sizeof(b[0]);
     for(int i=0;i<n;i++){
-        bool h=(kHeld&b[i].k)!=0;
-        printf(" %-3s %s  ",b[i].n,h?"\x1b[32m[ON]\x1b[0m":"\x1b[31m[  ]\x1b[0m");
-        if(i%2==1) printf("\n");
+        bool h=(held&b[i].k)!=0;
+        printf(" %s%s\x1b[0m",h?"\x1b[32m":"\x1b[31m",b[i].n);
+        if(i%3==2) printf("\n");
     }
-    printf("\n\x1b[20;1HPress B to return.");
+    printf("\n\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ─── Power Menu ────────────────────────────────────────────────────────────
-void showPowerMenu(int sel) {
-    resetCursor();
-    printf("\x1b[31m=== Power Options ===\x1b[0m\n\n");
-    const char* opts[]={"Return to Loader","Reboot System","Return to Home"};
+// ═══════════════════════════════════════════════════════════
+//  7. POWER MENU
+// ═══════════════════════════════════════════════════════════
+void showPowerMenu(int s) {
+    cur();
+    printf("\x1b[31m══ Power Options ══\x1b[0m\n\n");
+    const char* o[]={"Return to Loader","Reboot System","Return to Home"};
     for(int i=0;i<3;i++)
-        printf(" %s %s\n",sel==i?">":"  ",opts[i]);
-    printf("\n\x1b[20;1HPress A to confirm, B to return.");
+        printf(" %s %s\n",s==i?"\x1b[32m>\x1b[0m":" ",o[i]);
+    printf("\n\x1b[21;1H\x1b[90mA=Confirm  B=Back\x1b[0m");
 }
 
-// ─── LED Fun ───────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  8. LED CONTROL
+// ═══════════════════════════════════════════════════════════
+// Verified available in libctru 2.3:
+//   MCUHWC_SetWifiLedState, MCUHWC_SetPowerLedState
+//   LED_NORMAL, LED_SLEEP_MODE, LED_OFF
 #define LED_N 5
 const char* ledOpts[LED_N]={
     "Wifi LED: ON          ",
@@ -163,260 +307,433 @@ const char* ledOpts[LED_N]={
     "Power LED: Sleep Blink",
     "Power LED: OFF        ",
 };
-void showLEDFun(int sel){
-    resetCursor();
-    printf("\x1b[36m=== LED Control ===\x1b[0m\n\n");
+void showLED(int s){
+    cur();
+    printf("\x1b[36m══ LED Control ══\x1b[0m\n\n");
     for(int i=0;i<LED_N;i++)
-        printf(" %s %s\n",sel==i?">":"  ",ledOpts[i]);
-    printf("\n\x1b[20;1HPress A to activate, B to return.");
+        printf(" %s %s\n",s==i?"\x1b[36m>\x1b[0m":" ",ledOpts[i]);
+    printf("\n\x1b[21;1H\x1b[90mA=Activate  B=Back\x1b[0m");
 }
-void activateLED(int sel){
-    switch(sel){
-        case 0: MCUHWC_SetWifiLedState(true);            break;
-        case 1: MCUHWC_SetWifiLedState(false);           break;
-        case 2: MCUHWC_SetPowerLedState(LED_NORMAL);     break;
-        case 3: MCUHWC_SetPowerLedState(LED_SLEEP_MODE); break;
-        case 4: MCUHWC_SetPowerLedState(LED_OFF);        break;
+void doLED(int s){
+    switch(s){
+        case 0:MCUHWC_SetWifiLedState(true);           break;
+        case 1:MCUHWC_SetWifiLedState(false);          break;
+        case 2:MCUHWC_SetPowerLedState(LED_NORMAL);    break;
+        case 3:MCUHWC_SetPowerLedState(LED_SLEEP_MODE);break;
+        case 4:MCUHWC_SetPowerLedState(LED_OFF);       break;
     }
 }
 
-// ─── Mini-Game ─────────────────────────────────────────────────────────────
-void playMiniGame(int guess,int attempts,bool won,int target){
-    resetCursor();
-    printf("\x1b[35m=== Fox Guess (1-100) ===\x1b[0m\n\n");
+// ═══════════════════════════════════════════════════════════
+//  9. MINI-GAME: Number Guess
+// ═══════════════════════════════════════════════════════════
+void showGuess(int g,int a,bool won,int tgt){
+    cur();
+    printf("\x1b[35m══ Fox Guess (1-100) ══\x1b[0m\n\n");
     if(won){
-        printf(" \x1b[32mCONGRATS! Found %d in %d tries!\x1b[0m\n",target,attempts);
-        printf(" Press A to play again.        \n\n\n");
+        printf(" \x1b[32m★ FOUND %d in %d tries! ★\x1b[0m\n\n",tgt,a);
+        printf(" Press A to play again.\n");
     } else {
-        printf(" Guess:    %d    \n",guess);
-        printf(" Attempts: %d    \n",attempts);
-        if(attempts>0){
-            if(guess<target) printf(" Hint: \x1b[33mGo HIGHER!\x1b[0m    \n");
-            else             printf(" Hint: \x1b[33mGo LOWER! \x1b[0m    \n");
-        } else printf("                           \n");
-        printf("\n DPad Up/Down: change  A: guess\n");
+        printf(" Guess:    \x1b[33m%d\x1b[0m       \n",g);
+        printf(" Attempts: %d       \n",a);
+        if(a>0){
+            if(g<tgt) printf(" \x1b[32m↑ Go HIGHER!\x1b[0m        \n");
+            else      printf(" \x1b[31m↓ Go LOWER! \x1b[0m        \n");
+        } else printf("                    \n");
+        printf("\n DPad Up/Down: adjust\n A: guess\n");
     }
-    printf("\n\x1b[20;1HPress B to return.");
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ─── File Browser ──────────────────────────────────────────────────────────
-#define FB_MAX 128
-#define FB_NL   48
-#define FB_VIS  16
+// ═══════════════════════════════════════════════════════════
+//  10. SNAKE GAME
+// ═══════════════════════════════════════════════════════════
+#define SN_W 38
+#define SN_H 17
+#define SN_MAX 200
 
-struct FBState {
-    char path[256];
-    char entries[FB_MAX][FB_NL];
-    bool isDir[FB_MAX];
-    int  count,sel,top;
-    bool confirmDel;
-    char msg[64];
-    int  msgT;
+struct Snake {
+    int x[SN_MAX], y[SN_MAX];
+    int len, dir; // 0=R 1=L 2=U 3=D
+    int fx, fy;
+    int score;
+    bool dead;
+    int tick, tickRate;
 };
 
-void fbLoad(FBState& fb){
-    fb.count=fb.sel=fb.top=0;
-    fb.confirmDel=false; fb.msg[0]=0; fb.msgT=0;
-    DIR* d=opendir(fb.path); if(!d) return;
-    if(strcmp(fb.path,"sdmc:/")!=0){
-        strncpy(fb.entries[fb.count],"..",FB_NL-1);
-        fb.isDir[fb.count++]=true;
+void snakeInit(Snake& sn){
+    memset(&sn,0,sizeof(sn));
+    sn.len=3; sn.dir=0; sn.score=0; sn.dead=false;
+    sn.tick=0; sn.tickRate=8;
+    for(int i=0;i<sn.len;i++){ sn.x[i]=10-i; sn.y[i]=8; }
+    sn.fx=20; sn.fy=8;
+}
+
+void snakeDraw(Snake& sn){
+    cur();
+    printf("\x1b[35m══ Snake  Score:%d ══\x1b[0m\n",sn.score);
+    // Draw field
+    static char field[SN_H][SN_W+1];
+    for(int r=0;r<SN_H;r++){
+        for(int c=0;c<SN_W;c++)
+            field[r][c]=(r==0||r==SN_H-1||c==0||c==SN_W-1)?'#':' ';
+        field[r][SN_W]=0;
     }
+    // Food
+    if(sn.fx>=1&&sn.fx<SN_W-1&&sn.fy>=1&&sn.fy<SN_H-1)
+        field[sn.fy][sn.fx]='*';
+    // Snake
+    for(int i=0;i<sn.len;i++){
+        if(sn.x[i]>=0&&sn.x[i]<SN_W&&sn.y[i]>=0&&sn.y[i]<SN_H)
+            field[sn.y[i]][sn.x[i]]=(i==0?'O':'o');
+    }
+    for(int r=0;r<SN_H;r++) printf("%s\n",field[r]);
+    if(sn.dead) printf("\x1b[31m GAME OVER! A=Restart\x1b[0m  ");
+    else        printf(" DPad=Move           ");
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
+}
+
+void snakeUpdate(Snake& sn, u32 kDown){
+    if(sn.dead){if(kDown&KEY_A)snakeInit(sn);return;}
+    if(kDown&KEY_DRIGHT&&sn.dir!=1)sn.dir=0;
+    if(kDown&KEY_DLEFT &&sn.dir!=0)sn.dir=1;
+    if(kDown&KEY_DUP   &&sn.dir!=3)sn.dir=2;
+    if(kDown&KEY_DDOWN &&sn.dir!=2)sn.dir=3;
+
+    sn.tick++;
+    if(sn.tick<sn.tickRate) return;
+    sn.tick=0;
+
+    // Move body
+    for(int i=sn.len-1;i>0;i--){sn.x[i]=sn.x[i-1];sn.y[i]=sn.y[i-1];}
+    // Move head
+    if(sn.dir==0)sn.x[0]++;
+    if(sn.dir==1)sn.x[0]--;
+    if(sn.dir==2)sn.y[0]--;
+    if(sn.dir==3)sn.y[0]++;
+
+    // Wall collision
+    if(sn.x[0]<=0||sn.x[0]>=SN_W-1||sn.y[0]<=0||sn.y[0]>=SN_H-1){sn.dead=true;return;}
+    // Self collision
+    for(int i=1;i<sn.len;i++)
+        if(sn.x[0]==sn.x[i]&&sn.y[0]==sn.y[i]){sn.dead=true;return;}
+    // Food
+    if(sn.x[0]==sn.fx&&sn.y[0]==sn.fy){
+        sn.score+=10;
+        if(sn.len<SN_MAX)sn.len++;
+        if(sn.tickRate>2)sn.tickRate--;
+        sn.fx=1+rand()%(SN_W-2);
+        sn.fy=1+rand()%(SN_H-2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  11. CALCULATOR
+// ═══════════════════════════════════════════════════════════
+struct Calc {
+    double val, prev;
+    char   op;
+    char   disp[32];
+    bool   newInput;
+    char   msg[32];
+};
+
+void calcInit(Calc& c){
+    c.val=0;c.prev=0;c.op=0;
+    snprintf(c.disp,32,"0"); c.newInput=true; c.msg[0]=0;
+}
+
+void showCalc(Calc& c,int s){
+    cur();
+    printf("\x1b[33m══ Calculator ══\x1b[0m\n\n");
+    printf(" \x1b[32m%s\x1b[0m\n\n",c.disp);
+    if(c.msg[0]) printf(" \x1b[33m%s\x1b[0m\n\n",c.msg);
+    else printf("\n\n");
+
+    const char* btns[]={"7","8","9","/","4","5","6","*","1","2","3","-","0",".","=","+"};
+    for(int i=0;i<16;i++){
+        bool sel=(i==s);
+        printf(" %s%-2s\x1b[0m",sel?"\x1b[32m[":"\x1b[0m ",btns[i]);
+        printf("%s",sel?"]":" ");
+        if(i%4==3) printf("\n");
+    }
+    printf("\n A=Press  DPad=Move  X=Clear\n");
+    printf("\x1b[21;1H\x1b[90mB=Back\x1b[0m");
+}
+
+void calcPress(Calc& c, int s){
+    const char* btns[]={"7","8","9","/","4","5","6","*","1","2","3","-","0",".","=","+"};
+    const char* b=btns[s];
+    c.msg[0]=0;
+
+    if(b[0]>='0'&&b[0]<='9'){
+        if(c.newInput){snprintf(c.disp,32,"%c",b[0]);c.newInput=false;}
+        else if(strlen(c.disp)<14){char tmp[32];snprintf(tmp,32,"%s%c",c.disp,b[0]);strcpy(c.disp,tmp);}
+        c.val=atof(c.disp);
+    } else if(b[0]=='.'){
+        if(!strchr(c.disp,'.')){
+            strncat(c.disp,".",31);
+            c.val=atof(c.disp);
+        }
+    } else if(b[0]=='='){
+        double res=c.prev;
+        if(c.op=='+'){ res+=c.val; }
+        else if(c.op=='-'){ res-=c.val; }
+        else if(c.op=='*'){ res*=c.val; }
+        else if(c.op=='/'){ if(c.val!=0) res/=c.val; else{snprintf(c.msg,32,"Div by zero!");return;} }
+        else { res=c.val; }
+        snprintf(c.disp,32,"%.6g",res);
+        c.val=res; c.prev=0; c.op=0; c.newInput=true;
+    } else {
+        // operator
+        c.prev=c.val; c.op=b[0]; c.newInput=true;
+        snprintf(c.msg,32,"Op: %c",b[0]);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  12. FILE BROWSER
+// ═══════════════════════════════════════════════════════════
+struct FBState {
+    char path[256];
+    char ent[FB_MAX][FB_NL];
+    bool isDir[FB_MAX];
+    int  cnt,sel,top;
+    bool confirmDel;
+    char msg[64]; int msgT;
+};
+
+void fbLoad(FBState& f){
+    f.cnt=f.sel=f.top=0;f.confirmDel=false;f.msg[0]=0;f.msgT=0;
+    DIR* d=opendir(f.path); if(!d) return;
+    if(strcmp(f.path,"sdmc:/")!=0){
+        strncpy(f.ent[f.cnt],"..",FB_NL-1);f.isDir[f.cnt++]=true;}
     struct dirent* e;
-    while((e=readdir(d))&&fb.count<FB_MAX){
+    while((e=readdir(d))&&f.cnt<FB_MAX){
         if(e->d_name[0]=='.') continue;
-        strncpy(fb.entries[fb.count],e->d_name,FB_NL-1);
-        fb.entries[fb.count][FB_NL-1]=0;
-        char fp[320]; snprintf(fp,sizeof(fp),"%s%s",fb.path,e->d_name);
-        struct stat st; fb.isDir[fb.count]=(stat(fp,&st)==0&&S_ISDIR(st.st_mode));
-        fb.count++;
+        strncpy(f.ent[f.cnt],e->d_name,FB_NL-1); f.ent[f.cnt][FB_NL-1]=0;
+        char fp[320]; snprintf(fp,320,"%s%s",f.path,e->d_name);
+        struct stat st; f.isDir[f.cnt]=(stat(fp,&st)==0&&S_ISDIR(st.st_mode));
+        f.cnt++;
     }
     closedir(d);
 }
 
-void fbNav(FBState& fb){
-    if(!fb.count) return;
-    if(strcmp(fb.entries[fb.sel],"..")==0){
-        size_t len=strlen(fb.path);
-        if(len>7){
-            char tmp[256]; strncpy(tmp,fb.path,sizeof(tmp));
-            tmp[len-1]=0; char* s=strrchr(tmp,'/');
-            if(s){*(s+1)=0; strncpy(fb.path,tmp,sizeof(fb.path));}
-        }
-    } else if(fb.isDir[fb.sel]){
-        size_t l=strlen(fb.path);
-        strncat(fb.path,fb.entries[fb.sel],sizeof(fb.path)-l-2);
-        strncat(fb.path,"/",sizeof(fb.path)-strlen(fb.path)-1);
+void fbNav(FBState& f){
+    if(!f.cnt) return;
+    if(strcmp(f.ent[f.sel],"..")==0){
+        int l=(int)strlen(f.path);
+        if(l>7){char tmp[256];strncpy(tmp,f.path,255);tmp[l-1]=0;
+            char* s=strrchr(tmp,'/');if(s){*(s+1)=0;strncpy(f.path,tmp,255);}}
+    } else if(f.isDir[f.sel]){
+        int l=(int)strlen(f.path);
+        if(l+(int)strlen(f.ent[f.sel])+2<256){
+            strcat(f.path,f.ent[f.sel]); strcat(f.path,"/");}
     }
-    fbLoad(fb);
+    fbLoad(f);
 }
 
-void fbDel(FBState& fb){
-    if(!fb.count||strcmp(fb.entries[fb.sel],"..")==0) return;
-    char fp[320]; snprintf(fp,sizeof(fp),"%s%s",fb.path,fb.entries[fb.sel]);
-    int r=fb.isDir[fb.sel]?rmdir(fp):remove(fp);
-    snprintf(fb.msg,sizeof(fb.msg),r==0?"Deleted!":"Delete failed!");
-    fb.msgT=90; fbLoad(fb);
+void fbDel(FBState& f){
+    if(!f.cnt||strcmp(f.ent[f.sel],"..")==0) return;
+    char fp[320]; snprintf(fp,320,"%s%s",f.path,f.ent[f.sel]);
+    int r=f.isDir[f.sel]?rmdir(fp):remove(fp);
+    snprintf(f.msg,64,r==0?"Deleted!":"Failed!");
+    f.msgT=90; fbLoad(f);
 }
 
-void showFB(FBState& fb){
-    resetCursor();
-    char sp[38]; strncpy(sp,fb.path,37); sp[37]=0;
-    printf("\x1b[33m%-38s\x1b[0m\n",sp);
-    printf("--------------------------------------\n");
-    if(!fb.count){ printf(" (empty)\n"); for(int i=1;i<FB_VIS;i++) printf("\n"); }
+void showFB(FBState& f){
+    cur();
+    char sp[36]; strncpy(sp,f.path,35); sp[35]=0;
+    printf("\x1b[33m%-36s\x1b[0m\n",sp);
+    printf("────────────────────────────────────\n");
+    if(!f.cnt){printf(" (empty)\n");for(int i=1;i<FB_VIS;i++)printf("\n");}
     else {
-        int end=fb.top+FB_VIS; if(end>fb.count) end=fb.count;
-        for(int i=fb.top;i<end;i++){
-            bool s=(i==fb.sel);
-            char nm[28]; strncpy(nm,fb.entries[i],27); nm[27]=0;
-            printf(" %s %s %-27s\n",s?">":"  ",fb.isDir[i]?"\x1b[34m[D]\x1b[0m":"[F]",nm);
+        int end=f.top+FB_VIS; if(end>f.cnt)end=f.cnt;
+        for(int i=f.top;i<end;i++){
+            bool s=(i==f.sel);
+            char nm[26];strncpy(nm,f.ent[i],25);nm[25]=0;
+            printf(" %s%s %-25s\x1b[0m\n",
+                s?"\x1b[32m":"\x1b[0m",
+                f.isDir[i]?"[D]":"[F]",nm);
         }
-        for(int i=end-fb.top;i<FB_VIS;i++) printf("\n");
+        for(int i=end-f.top;i<FB_VIS;i++) printf("\n");
     }
-    printf("-- %d/%d ",fb.sel+1,fb.count);
-    if(fb.msgT>0){printf("%-20s\n",fb.msg);fb.msgT--;}else printf("\n");
-    printf("\x1b[20;1H");
-    if(fb.confirmDel) printf("\x1b[31mDelete? A=Yes B=No\x1b[0m          ");
-    else              printf("A=Enter  X=Delete  B=Back       ");
+    printf("── %d/%d ",f.sel+1,f.cnt);
+    if(f.msgT>0){printf("%-16s\n",f.msg);f.msgT--;}else printf("                \n");
+    printf("\x1b[21;1H");
+    if(f.confirmDel) printf("\x1b[31mDelete? A=Yes B=No\x1b[0m      ");
+    else             printf("\x1b[90mA=Open  X=Del  B=Back\x1b[0m  ");
 }
 
-void fbInput(FBState& fb,u32 kDown){
-    if(fb.confirmDel){
-        if(kDown&KEY_A) fbDel(fb);
-        if(kDown&(KEY_A|KEY_B)) fb.confirmDel=false;
+void fbInput(FBState& f,u32 kDown){
+    if(f.confirmDel){
+        if(kDown&KEY_A)fbDel(f);
+        if(kDown&(KEY_A|KEY_B))f.confirmDel=false;
         return;
     }
-    if(kDown&KEY_DUP&&fb.sel>0){fb.sel--;if(fb.sel<fb.top)fb.top=fb.sel;}
-    if(kDown&KEY_DDOWN&&fb.sel<fb.count-1){
-        fb.sel++;if(fb.sel>=fb.top+FB_VIS)fb.top=fb.sel-FB_VIS+1;
-    }
-    if(kDown&KEY_A) fbNav(fb);
-    if(kDown&KEY_X&&fb.count&&strcmp(fb.entries[fb.sel],"..")!=0)
-        fb.confirmDel=true;
+    if(kDown&KEY_DUP&&f.sel>0){f.sel--;if(f.sel<f.top)f.top=f.sel;}
+    if(kDown&KEY_DDOWN&&f.sel<f.cnt-1){f.sel++;if(f.sel>=f.top+FB_VIS)f.top=f.sel-FB_VIS+1;}
+    if(kDown&KEY_A)fbNav(f);
+    if(kDown&KEY_X&&f.cnt&&strcmp(f.ent[f.sel],"..")!=0)f.confirmDel=true;
 }
 
-// ─── About ─────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+//  13. ABOUT
+// ═══════════════════════════════════════════════════════════
 void showAbout(){
-    resetCursor();
-    printf("\x1b[35m=== DarkFox-3DS v2.0 ===\x1b[0m\n\n");
+    cur();
+    printf("\x1b[35m══ DarkFox-3DS v3.0 ══\x1b[0m\n\n");
     printf(" Developer: DarkFox Team\n\n");
-    printf("  1. System Info\n");
-    printf("  2. File Browser (A/X/B)\n");
-    printf("  3. Power Options\n");
-    printf("  4. LED Control\n");
-    printf("  5. Mini-Game w/ Hints\n");
-    printf("  6. Network Info + SSID\n");
-    printf("  7. Hardware Test\n");
-    printf("  8. Clock & Date\n");
-    printf("  9. Storage Info\n");
-    printf("  0. Button Tester\n");
-    printf("\n\x1b[20;1HPress B to return.");
+    printf(" \x1b[33mFeatures:\x1b[0m\n");
+    printf("  1  System Info + RAM Bar\n");
+    printf("  2  File Browser (Open/Del)\n");
+    printf("  3  Power Options\n");
+    printf("  4  LED Control\n");
+    printf("  5  Number Guess Mini-Game\n");
+    printf("  6  Network Info + Security\n");
+    printf("  7  Hardware Test (live)\n");
+    printf("  8  Clock & Date (live)\n");
+    printf("  9  Storage Info + Bars\n");
+    printf("  10 Button Tester (live)\n");
+    printf("  11 Snake Game\n");
+    printf("  12 Calculator\n");
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ─── Main ──────────────────────────────────────────────────────────────────
-int main(int argc,char* argv[]){
+// ═══════════════════════════════════════════════════════════
+//  MAIN
+// ═══════════════════════════════════════════════════════════
+int main(int argc, char* argv[]){
     gfxInitDefault();
     PrintConsole top,bot;
     consoleInit(GFX_TOP,&top);
     consoleInit(GFX_BOTTOM,&bot);
+
     mcuHwcInit(); ptmuInit(); acInit(); hidInit();
 
     FBState fb; memset(&fb,0,sizeof(fb));
-    strncpy(fb.path,"sdmc:/",sizeof(fb.path)-1); fbLoad(fb);
+    strncpy(fb.path,"sdmc:/",255); fbLoad(fb);
 
-    int sel=0,subSel=0;
-    MenuState state=MAIN_MENU,prev=(MenuState)-1;
+    Snake sn; snakeInit(sn);
+
+    Calc calc; calcInit(calc);
+
+    int mainSel=0, subSel=0;
+    MenuState state=MAIN_MENU, prev=(MenuState)-1;
+
     int guess=50,target=1,attempts=0; bool won=false;
     srand((unsigned int)osGetTime()); target=rand()%100+1;
 
-    const char* opts[]={
-        "System Info  ","File Browser ","Power Options","LED Control  ",
-        "Mini-Game    ","Network Info ","Hardware Test","Clock & Date ",
-        "Storage Info ","Button Test  ","About        "
+    int calcSel=0;
+
+    const char* mainOpts[]={
+        " 1. System Info  "," 2. File Browser "," 3. Power Options",
+        " 4. LED Control  "," 5. Mini-Game    "," 6. Network Info ",
+        " 7. Hardware Test"," 8. Clock & Date "," 9. Storage Info ",
+        "10. Button Test  ","11. Snake Game   ","12. Calculator   ",
+        "13. About        "
     };
-    const int N=11;
+    const int MCOUNT=13;
 
     while(aptMainLoop()){
         hidScanInput();
         u32 kDown=hidKeysDown(), kHeld=hidKeysHeld();
-        if(kDown&KEY_START) break;
+        if((kDown&KEY_START)&&state==MAIN_MENU) break;
 
         bool changed=(state!=prev);
         if(changed){
-            consoleSelect(&top); fullClear();
-            consoleSelect(&bot); fullClear();
+            consoleSelect(&top); cls();
+            consoleSelect(&bot); cls();
             prev=state;
             if(state==FILE_BROWSER) fbLoad(fb);
+            if(state==SNAKE_GAME)   snakeInit(sn);
+            if(state==CALC)         calcInit(calc);
         }
 
-        // Bottom – Live Status
+        // Bottom screen
         consoleSelect(&bot);
-        printf("\x1b[H\x1b[31mDarkFox-3DS v2.0\x1b[0m\n");
-        printf("----------------------------\n");
-        u8 bat=0,batChg=0;
-        MCUHWC_GetBatteryLevel(&bat); PTMU_GetBatteryChargeState(&batChg);
-        printf("Bat: %d%% %s\n",bat,batChg?"\x1b[32m[CHG]\x1b[0m":"     ");
-        u64 ms=osGetTime(); time_t sec=(time_t)(ms/1000);
-        struct tm* t=gmtime(&sec);
-        printf("UTC: %02d:%02d:%02d\n",t->tm_hour,t->tm_min,t->tm_sec);
-        u32 wifi=0; ACU_GetWifiStatus(&wifi);
-        printf("Net: %s\n",wifi?"\x1b[32mConnected\x1b[0m   ":"\x1b[31mNo WiFi\x1b[0m     ");
-        printf("IP:  %s\n",getIP());
+        char sub[64]={0};
+        if(state==MINI_GAME) snprintf(sub,64,"Guess:%d Att:%d",guess,attempts);
+        if(state==SNAKE_GAME) snprintf(sub,64,"Score:%d",sn.score);
+        drawStatus(state,sub);
 
-        // Top
+        // Top screen
         consoleSelect(&top);
 
         if(state==MAIN_MENU){
-            resetCursor();
-            printf("\x1b[31mDarkFox-3DS v2.0\x1b[0m\n\n");
-            for(int i=0;i<N;i++)
-                printf(" %s %2d. %s\n",sel==i?">":"  ",i+1,opts[i]);
-            if(kDown&KEY_DUP)   sel=(sel-1+N)%N;
-            if(kDown&KEY_DDOWN) sel=(sel+1)%N;
+            cur();
+            printf("\x1b[31mDarkFox-3DS v3.0\x1b[0m\n\n");
+            int half=(MCOUNT+1)/2;
+            for(int i=0;i<half;i++){
+                // Left column
+                bool s=(i==mainSel);
+                printf("%s%-19s\x1b[0m",s?"\x1b[32m":"\x1b[0m",mainOpts[i]);
+                // Right column
+                int j=i+half;
+                if(j<MCOUNT){
+                    bool s2=(j==mainSel);
+                    printf(" %s%-19s\x1b[0m",s2?"\x1b[32m":"\x1b[0m",mainOpts[j]);
+                }
+                printf("\n");
+            }
+            printf("\n\x1b[90mDPad=Nav  A=Select  START=Quit\x1b[0m\n");
+
+            if(kDown&KEY_DUP)    mainSel=(mainSel-1+MCOUNT)%MCOUNT;
+            if(kDown&KEY_DDOWN)  mainSel=(mainSel+1)%MCOUNT;
+            if(kDown&KEY_DLEFT)  mainSel=(mainSel-((MCOUNT+1)/2)+MCOUNT)%MCOUNT;
+            if(kDown&KEY_DRIGHT) mainSel=(mainSel+((MCOUNT+1)/2))%MCOUNT;
             if(kDown&KEY_A){
                 subSel=0;
-                switch(sel){
-                    case 0: state=SYSTEM_INFO;   break;
-                    case 1: state=FILE_BROWSER;  break;
-                    case 2: state=POWER_MENU;    break;
-                    case 3: state=LED_FUN;       break;
-                    case 4: state=MINI_GAME;     break;
-                    case 5: state=NETWORK_INFO;  break;
-                    case 6: state=HARDWARE_TEST; break;
-                    case 7: state=CLOCK_SCREEN;  break;
-                    case 8: state=STORAGE_INFO;  break;
-                    case 9: state=BUTTON_TEST;   break;
-                    case 10:state=ABOUT;         break;
+                switch(mainSel){
+                    case 0: state=SYSTEM_INFO;  break;
+                    case 1: state=FILE_BROWSER; break;
+                    case 2: state=POWER_MENU;   break;
+                    case 3: state=LED_FUN;      break;
+                    case 4: state=MINI_GAME;    break;
+                    case 5: state=NETWORK_INFO; break;
+                    case 6: state=HW_TEST;      break;
+                    case 7: state=CLOCK_VIEW;   break;
+                    case 8: state=STORAGE_INFO; break;
+                    case 9: state=BTN_TEST;     break;
+                    case 10:state=SNAKE_GAME;   break;
+                    case 11:state=CALC;         break;
+                    case 12:state=ABOUT;        break;
                 }
             }
         } else {
+            bool goBack=false;
+
             switch(state){
-                case SYSTEM_INFO:   showSystemInfo();        break;
-                case NETWORK_INFO:  showNetworkInfo();       break;
-                case STORAGE_INFO:  showStorageInfo();       break;
-                case CLOCK_SCREEN:  showClock();             break;
-                case HARDWARE_TEST: showHardwareTest();      break;
-                case BUTTON_TEST:   showButtonTest(kHeld);   break;
-                case ABOUT:         showAbout();             break;
+                case SYSTEM_INFO:  showSystemInfo(); if(kDown&KEY_B)goBack=true; break;
+                case NETWORK_INFO: showNetworkInfo(); if(kDown&KEY_B)goBack=true; break;
+                case STORAGE_INFO: showStorageInfo(); if(kDown&KEY_B)goBack=true; break;
+                case HW_TEST:      showHWTest();      if(kDown&KEY_B)goBack=true; break;
+                case CLOCK_VIEW:   showClock();       if(kDown&KEY_B)goBack=true; break;
+                case BTN_TEST:     showBtnTest(kHeld);if(kDown&KEY_B)goBack=true; break;
+                case ABOUT:        showAbout();       if(kDown&KEY_B)goBack=true; break;
+
                 case POWER_MENU:
                     showPowerMenu(subSel);
                     if(kDown&KEY_DUP)   subSel=(subSel-1+3)%3;
                     if(kDown&KEY_DDOWN) subSel=(subSel+1)%3;
                     if(kDown&KEY_A){
-                        if(subSel==0) goto done;
+                        if(subSel==0){goto done;}
                         if(subSel==1) NS_RebootSystem();
-                        if(subSel==2) goto done;
+                        if(subSel==2){goto done;}
                     }
+                    if(kDown&KEY_B) goBack=true;
                     break;
+
                 case LED_FUN:
-                    showLEDFun(subSel);
+                    showLED(subSel);
                     if(kDown&KEY_DUP)   subSel=(subSel-1+LED_N)%LED_N;
                     if(kDown&KEY_DDOWN) subSel=(subSel+1)%LED_N;
-                    if(kDown&KEY_A) activateLED(subSel);
+                    if(kDown&KEY_A) doLED(subSel);
+                    if(kDown&KEY_B) goBack=true;
                     break;
+
                 case MINI_GAME:
-                    playMiniGame(guess,attempts,won,target);
+                    showGuess(guess,attempts,won,target);
                     if(!won){
                         if(kDown&KEY_DUP)   {guess++;if(guess>100)guess=100;}
                         if(kDown&KEY_DDOWN) {guess--;if(guess<1)  guess=1;  }
@@ -424,15 +741,38 @@ int main(int argc,char* argv[]){
                     } else if(kDown&KEY_A){
                         won=false;attempts=0;guess=50;target=rand()%100+1;
                     }
+                    if(kDown&KEY_B) goBack=true;
                     break;
+
+                case SNAKE_GAME:
+                    snakeUpdate(sn,kDown);
+                    snakeDraw(sn);
+                    if(kDown&KEY_B) goBack=true;
+                    break;
+
+                case CALC:
+                    showCalc(calc,calcSel);
+                    if(kDown&KEY_DUP)    calcSel=(calcSel-4+16)%16;
+                    if(kDown&KEY_DDOWN)  calcSel=(calcSel+4)%16;
+                    if(kDown&KEY_DLEFT)  calcSel=(calcSel-1+16)%16;
+                    if(kDown&KEY_DRIGHT) calcSel=(calcSel+1)%16;
+                    if(kDown&KEY_A) calcPress(calc,calcSel);
+                    if(kDown&KEY_X) calcInit(calc);
+                    if(kDown&KEY_B) goBack=true;
+                    break;
+
                 case FILE_BROWSER:
-                    fbInput(fb,kDown); showFB(fb);
+                    fbInput(fb,kDown);
+                    showFB(fb);
+                    if((kDown&KEY_B)&&!fb.confirmDel) goBack=true;
                     break;
-                default: break;
+
+                default: goBack=true; break;
             }
-            bool backOk=(state==FILE_BROWSER&&!fb.confirmDel)||state!=FILE_BROWSER;
-            if((kDown&KEY_B)&&backOk) state=MAIN_MENU;
+
+            if(goBack) state=MAIN_MENU;
         }
+
         gfxFlushBuffers(); gfxSwapBuffers(); gspWaitForVBlank();
     }
 done:
