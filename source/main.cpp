@@ -1,4 +1,4 @@
-// DarkFox-3DS v4.0 - libctru 2.3 verified
+// DarkFox-3DS v5.0 - ASCII only, libctru 2.3 verified
 #include <3ds.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,26 +7,28 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
-#include <math.h>
 
 enum MenuState {
-    MAIN_MENU=0, SYSTEM_INFO, FILE_BROWSER, POWER_MENU,
-    LED_FUN, MINI_GAME, NETWORK_INFO, HW_TEST,
-    CLOCK_VIEW, STORAGE_INFO, BTN_TEST, SNAKE_GAME,
-    CALC, REACTION_GAME, COLOR_TEST, ABOUT
+    MAIN_MENU=0,
+    SYSTEM_INFO, FILE_BROWSER, POWER_MENU, LED_FUN,
+    MINI_GAME, NETWORK_INFO, HW_TEST, CLOCK_VIEW,
+    STORAGE_INFO, BTN_TEST, SNAKE_GAME, CALC,
+    REACTION_GAME, COLOR_TEST, STOPWATCH, COUNTER,
+    MEMO_PAD, COMPASS, TEMP_CONV, UNIT_CONV,
+    RANDOM_GEN, ABOUT
 };
 
 #define FB_MAX 128
 #define FB_NL   48
-#define FB_VIS  15
+#define FB_VIS  14
 #define LED_N    5
+#define MN      23
 
-// ═══════════════════════════════════════════════
-//  UTILITIES
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// UTILITIES
+// -----------------------------------------------
 void cur() { printf("\x1b[H"); }
 void cls() { consoleClear(); }
-void gotoxy(int x,int y){printf("\x1b[%d;%dH",y,x);}
 
 const char* ip4str() {
     static char b[16];
@@ -36,161 +38,146 @@ const char* ip4str() {
         (int)((ip>>16)&0xFF),(int)((ip>>24)&0xFF));
     return b;
 }
-const char* szStr(u64 b){
+const char* szStr(u64 b) {
     static char buf[24];
-    if     (b>=1024ULL*1024*1024)snprintf(buf,24,"%.2fGB",(double)b/(1024.0*1024*1024));
-    else if(b>=1024ULL*1024)     snprintf(buf,24,"%.2fMB",(double)b/(1024.0*1024));
-    else if(b>=1024ULL)          snprintf(buf,24,"%.2fKB",(double)b/1024.0);
-    else                         snprintf(buf,24,"%dB",(int)b);
+    if     (b>=1024ULL*1024*1024) snprintf(buf,24,"%.2fGB",(double)b/(1024.0*1024*1024));
+    else if(b>=1024ULL*1024)      snprintf(buf,24,"%.2fMB",(double)b/(1024.0*1024));
+    else if(b>=1024ULL)           snprintf(buf,24,"%.2fKB",(double)b/1024.0);
+    else                          snprintf(buf,24,"%dB",(int)b);
     return buf;
 }
-void bar(int pct,int w){
+void bar(int pct, int w) {
     printf("[");
-    for(int i=0;i<w;i++) printf(i<pct*w/100?"#":"-");
-    printf("]%d%%",pct);
+    for(int i=0;i<w;i++) printf(i<pct*w/100?"#":".");
+    printf("] %d%%", pct);
 }
 
-// ═══════════════════════════════════════════════
-//  BOTTOM SCREEN - RICH STATUS PANEL
-// ═══════════════════════════════════════════════
-// Bottom screen is 40 cols x 30 rows (console mode)
-// We use all of it for a dashboard
+// -----------------------------------------------
+// GLOBALS for bottom screen
+// -----------------------------------------------
+static MenuState g_state = MAIN_MENU;
+static int  g_snakeScore = 0;
+static int  g_attempts   = 0;
+static u64  g_swStart    = 0;
+static bool g_swRunning  = false;
+static int  g_counter    = 0;
 
-static MenuState g_state=MAIN_MENU;
-static int       g_snakeScore=0;
-static int       g_guessAttempts=0;
+// -----------------------------------------------
+// BOTTOM SCREEN DASHBOARD (ASCII only)
+// -----------------------------------------------
+void drawBottom() {
+    printf("\x1b[H");
 
-void drawBottom(){
-    printf("\x1b[H"); // cursor to top-left of bottom screen
+    // Header
+    printf("\x1b[31m+--DarkFox-3DS v5.0-----+\x1b[0m\n");
 
-    // ── Row 1-2: Header ──
-    printf("\x1b[31m╔══ DarkFox-3DS v4.0 ════╗\x1b[0m\n");
-
-    // ── Row 3-5: Battery ──
+    // Battery
     u8 bat=0,chg=0;
     MCUHWC_GetBatteryLevel(&bat);
     PTMU_GetBatteryChargeState(&chg);
-    const char* batCol=(bat>50)?"\x1b[32m":(bat>20)?"\x1b[33m":"\x1b[31m";
-    printf("%sBat:%3d%%%s %s\n",batCol,bat,"\x1b[0m",chg?"\x1b[33m⚡CHG\x1b[0m":"     ");
-    // battery bar (20 wide)
+    const char* bc=(bat>50)?"\x1b[32m":(bat>20)?"\x1b[33m":"\x1b[31m";
+    printf("%sBat:%3d%%%s %s\n",bc,bat,"\x1b[0m",chg?"\x1b[33m[CHG]\x1b[0m":"     ");
+    // battery ascii bar
     int bw=(int)(bat*20/100);
     printf("[");
-    for(int i=0;i<20;i++) printf(i<bw?(bat>50?"#":(bat>20?"=":" ")):"_");
+    for(int i=0;i<20;i++) printf(i<bw?"#":".");
     printf("]\n");
 
-    // ── Row 6-7: Clock ──
+    // Clock
     u64 ms=osGetTime(); time_t s=(time_t)(ms/1000);
     struct tm* t=gmtime(&s);
-    printf("\x1b[36mUTC \x1b[32m%02d:%02d:%02d\x1b[0m %02d/%02d/%04d\n",
+    printf("\x1b[36mUTC\x1b[32m %02d:%02d:%02d\x1b[0m %02d/%02d/%04d\n",
            t->tm_hour,t->tm_min,t->tm_sec,
            t->tm_mday,t->tm_mon+1,t->tm_year+1900);
 
-    // ── Row 8-9: Network ──
+    // Network
     u32 wifi=0; ACU_GetWifiStatus(&wifi);
-    printf("Net:%s  IP:%-15s\n",
-           wifi?"\x1b[32mONLINE \x1b[0m":"\x1b[31mOFFLINE\x1b[0m",
-           ip4str());
+    printf("Net:%s IP:%-15s\n",
+           wifi?"\x1b[32mON \x1b[0m":"\x1b[31mOFF\x1b[0m", ip4str());
 
-    // ── Row 10: Sliders ──
+    // Sliders
     u8 sl3d=0,slSnd=0;
     MCUHWC_Get3dSliderLevel(&sl3d);
     MCUHWC_GetSoundSliderLevel(&slSnd);
-    printf("3D:%-3d  Vol:%-3d  ",sl3d,slSnd);
-    // wifi bars
-    if(wifi){
-        printf("\x1b[32m▂▄▆█\x1b[0m");
-    } else {
-        printf("\x1b[31m----\x1b[0m");
-    }
-    printf("\n");
+    printf("3D:%-3d Vol:%-3d %s\n",sl3d,slSnd,
+           wifi?"\x1b[32m[WiFi OK]\x1b[0m":"\x1b[31m[No WiFi]\x1b[0m");
 
-    // ── Row 11: RAM ──
-    u32 ramUsed=(u32)osGetMemRegionUsed(MEMREGION_APPLICATION);
-    u32 ramTot =(u32)osGetMemRegionSize(MEMREGION_APPLICATION);
-    int rp=ramTot>0?(int)(ramUsed*100/ramTot):0;
+    // RAM bar
+    u32 rU=(u32)osGetMemRegionUsed(MEMREGION_APPLICATION);
+    u32 rT=(u32)osGetMemRegionSize(MEMREGION_APPLICATION);
+    int rp=rT>0?(int)(rU*100/rT):0;
     printf("RAM[");
-    for(int i=0;i<16;i++) printf(i<rp*16/100?"#":"-");
+    for(int i=0;i<16;i++) printf(i<rp*16/100?"#":".");
     printf("]%d%%\n",rp);
 
-    // ── Row 12: Divider ──
-    printf("\x1b[31m╠════════════════════════╣\x1b[0m\n");
+    printf("+------------------------+\n");
 
-    // ── Row 13-14: Touch + Circle ──
+    // Touch + circle
     touchPosition tp; hidTouchRead(&tp);
     circlePosition cp; hidCircleRead(&cp);
-    printf("Touch:X=%-4d Y=%-4d      \n",tp.px,tp.py);
-    printf("Stick:X=%-5d Y=%-5d    \n",cp.dx,cp.dy);
+    printf("Touch X=%-4d Y=%-4d    \n",tp.px,tp.py);
+    printf("Stick X=%-5d Y=%-5d  \n",cp.dx,cp.dy);
 
-    // ── Row 15: Held buttons summary ──
+    // Held buttons
     u32 held=hidKeysHeld();
     printf("Btn:");
-    if(held&KEY_A)     printf("\x1b[32mA\x1b[0m");else printf(".");
-    if(held&KEY_B)     printf("\x1b[32mB\x1b[0m");else printf(".");
-    if(held&KEY_X)     printf("\x1b[32mX\x1b[0m");else printf(".");
-    if(held&KEY_Y)     printf("\x1b[32mY\x1b[0m");else printf(".");
-    if(held&KEY_L)     printf("\x1b[32mL\x1b[0m");else printf(".");
-    if(held&KEY_R)     printf("\x1b[32mR\x1b[0m");else printf(".");
-    if(held&KEY_DUP)   printf("\x1b[32m^\x1b[0m");else printf(".");
-    if(held&KEY_DDOWN) printf("\x1b[32mv\x1b[0m");else printf(".");
-    if(held&KEY_DLEFT) printf("\x1b[32m<\x1b[0m");else printf(".");
-    if(held&KEY_DRIGHT)printf("\x1b[32m>\x1b[0m");else printf(".");
-    if(held&KEY_START) printf("\x1b[33mST\x1b[0m");else printf("..");
+    printf("%s",held&KEY_A    ?"\x1b[32mA\x1b[0m":".");
+    printf("%s",held&KEY_B    ?"\x1b[32mB\x1b[0m":".");
+    printf("%s",held&KEY_X    ?"\x1b[32mX\x1b[0m":".");
+    printf("%s",held&KEY_Y    ?"\x1b[32mY\x1b[0m":".");
+    printf("%s",held&KEY_L    ?"\x1b[32mL\x1b[0m":".");
+    printf("%s",held&KEY_R    ?"\x1b[32mR\x1b[0m":".");
+    printf("%s",held&KEY_DUP  ?"\x1b[32m^\x1b[0m":".");
+    printf("%s",held&KEY_DDOWN?"\x1b[32mv\x1b[0m":".");
+    printf("%s",held&KEY_DLEFT?"\x1b[32m<\x1b[0m":".");
+    printf("%s",held&KEY_DRIGHT?"\x1b[32m>\x1b[0m":".");
+    printf("%s",held&KEY_START?"\x1b[33mST\x1b[0m":"..");
     printf("\n");
 
-    // ── Row 16: Divider ──
-    printf("\x1b[31m╠════════════════════════╣\x1b[0m\n");
+    printf("+------------------------+\n");
 
-    // ── Row 17-19: Context info depending on state ──
-    const char* stateName="";
-    switch(g_state){
-        case MAIN_MENU:    stateName="Main Menu";    break;
-        case SYSTEM_INFO:  stateName="System Info";  break;
-        case FILE_BROWSER: stateName="File Browser"; break;
-        case POWER_MENU:   stateName="Power Menu";   break;
-        case LED_FUN:      stateName="LED Control";  break;
-        case MINI_GAME:    stateName="Mini-Game";    break;
-        case NETWORK_INFO: stateName="Network";      break;
-        case HW_TEST:      stateName="HW Test";      break;
-        case CLOCK_VIEW:   stateName="Clock";        break;
-        case STORAGE_INFO: stateName="Storage";      break;
-        case BTN_TEST:     stateName="Btn Test";     break;
-        case SNAKE_GAME:   stateName="Snake";        break;
-        case CALC:         stateName="Calculator";   break;
-        case REACTION_GAME:stateName="Reaction";     break;
-        case COLOR_TEST:   stateName="Color Test";   break;
-        case ABOUT:        stateName="About";        break;
-        default:           stateName="???";          break;
-    }
-    printf("\x1b[33mMode: %-18s\x1b[0m\n",stateName);
+    // Context info
+    const char* nm[MN]={
+        "Main Menu","System Info","File Browser","Power Menu","LED Control",
+        "Mini-Game","Network","HW Test","Clock","Storage",
+        "Btn Test","Snake","Calculator","Reaction","Color Test",
+        "Stopwatch","Counter","Memo Pad","Compass","Temp Conv",
+        "Unit Conv","Random Gen","About"
+    };
+    int si=(int)g_state;
+    printf("\x1b[33mMode: %-18s\x1b[0m\n", si<MN?nm[si]:"???");
 
-    // Context-specific info
     if(g_state==SNAKE_GAME)
-        printf("Score: \x1b[32m%d\x1b[0m                  \n",g_snakeScore);
+        printf("Snake Score: \x1b[32m%d\x1b[0m           \n",g_snakeScore);
     else if(g_state==MINI_GAME)
-        printf("Attempts: \x1b[33m%d\x1b[0m               \n",g_guessAttempts);
+        printf("Attempts: \x1b[33m%d\x1b[0m              \n",g_attempts);
+    else if(g_state==STOPWATCH) {
+        u64 elapsed = g_swRunning ? (osGetTime()-g_swStart) : g_swStart;
+        unsigned long es=(unsigned long)(elapsed/1000);
+        printf("SW: %02lu:%02lu.%03lu %s      \n",
+               es/60, es%60, (unsigned long)(elapsed%1000),
+               g_swRunning?"\x1b[32m[RUN]\x1b[0m":"\x1b[31m[STP]\x1b[0m");
+    } else if(g_state==COUNTER)
+        printf("Counter: \x1b[32m%d\x1b[0m               \n",g_counter);
     else {
-        // uptime
         unsigned long up=(unsigned long)(ms/1000);
-        printf("Up: %luh%02lum%02lus              \n",up/3600,(up%3600)/60,up%60);
+        printf("Up:%02luh%02lum%02lus             \n",up/3600,(up%3600)/60,up%60);
     }
 
-    // Gyro mini display
+    // Gyro mini bar
     angularRate gy; hidGyroRead(&gy);
-    int gx=gy.x/200, gz=gy.z/200; // scale down
-    if(gx>5)gx=5;if(gx<-5)gx=-5;
-    if(gz>5)gz=5;if(gz<-5)gz=-5;
+    int gx=gy.x/200; if(gx>9)gx=9;if(gx<-9)gx=-9;
     printf("Gyro[");
-    for(int i=-5;i<=5;i++) printf(i==gx?"\x1b[36mX\x1b[0m":(i==0?"|":" "));
+    for(int i=-9;i<=9;i++) printf(i==gx?"\x1b[36mX\x1b[0m":(i==0?"|":"."));
     printf("]\n");
 
-    // ── Row 20: Footer ──
-    printf("\x1b[31m╚════════════════════════╝\x1b[0m");
+    printf("\x1b[31m+------------------------+\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  1. SYSTEM INFO
-// ═══════════════════════════════════════════════
-void showSystemInfo(){
+// -----------------------------------------------
+// 1. SYSTEM INFO
+// -----------------------------------------------
+void showSystemInfo() {
     cur();
     printf("\x1b[32m== System Info ==\x1b[0m\n\n");
     u8 model=0; cfguInit(); CFGU_GetSystemModel(&model); cfguExit();
@@ -217,10 +204,10 @@ void showSystemInfo(){
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  2. NETWORK INFO
-// ═══════════════════════════════════════════════
-void showNetworkInfo(){
+// -----------------------------------------------
+// 2. NETWORK INFO
+// -----------------------------------------------
+void showNetworkInfo() {
     cur();
     printf("\x1b[36m== Network Info ==\x1b[0m\n\n");
     u32 wifi=0; ACU_GetWifiStatus(&wifi);
@@ -234,14 +221,13 @@ void showNetworkInfo(){
     printf(" Security:%s\n",(int)secMode<8?secN[(int)secMode]:"Unknown");
     bool proxyEn=false; ACU_GetProxyEnable(&proxyEn);
     printf(" Proxy:   %s\n",proxyEn?"Enabled":"Disabled");
-    if(proxyEn){u32 port=0;ACU_GetProxyPort(&port);printf(" PxyPort: %lu\n",(unsigned long)port);}
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  3. STORAGE INFO
-// ═══════════════════════════════════════════════
-void showStorageInfo(){
+// -----------------------------------------------
+// 3. STORAGE INFO
+// -----------------------------------------------
+void showStorageInfo() {
     cur();
     printf("\x1b[33m== Storage Info ==\x1b[0m\n\n");
     FS_ArchiveResource sdR={0};
@@ -249,7 +235,7 @@ void showStorageInfo(){
     u64 sdTot=(u64)sdR.totalClusters*sdR.clusterSize;
     u64 sdFree=(u64)sdR.freeClusters*sdR.clusterSize;
     int sdPct=sdTot>0?(int)(100-(sdFree*100/sdTot)):0;
-    printf(" \x1b[33mSD Card:\x1b[0m\n");
+    printf(" SD Card:\n");
     printf("  Total: %s\n",szStr(sdTot));
     printf("  Free:  %s\n",szStr(sdFree));
     printf("  Used:  %s\n",szStr(sdTot-sdFree));
@@ -257,7 +243,7 @@ void showStorageInfo(){
     u32 used=(u32)osGetMemRegionUsed(MEMREGION_APPLICATION);
     u32 tot=(u32)osGetMemRegionSize(MEMREGION_APPLICATION);
     int rp=tot>0?(int)(used*100/tot):0;
-    printf(" \x1b[33mApp RAM:\x1b[0m\n");
+    printf(" App RAM:\n");
     printf("  Total: %s\n",szStr(tot));
     printf("  Used:  %s\n",szStr(used));
     printf("  Free:  %s\n",szStr(tot-used));
@@ -265,19 +251,16 @@ void showStorageInfo(){
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  4. HARDWARE TEST
-// ═══════════════════════════════════════════════
-void showHWTest(){
+// -----------------------------------------------
+// 4. HARDWARE TEST
+// -----------------------------------------------
+void showHWTest() {
     cur();
     printf("\x1b[33m== Hardware Test ==\x1b[0m\n\n");
     touchPosition tp; hidTouchRead(&tp);
     printf(" Touch:  X=%-4d Y=%-4d     \n",tp.px,tp.py);
-    // touch visual
-    printf(" [");
-    int tx=tp.px*18/320;
-    for(int i=0;i<18;i++) printf(i==tx?"T":"-");
-    printf("]\n");
+    int tx=tp.px*18/320; if(tx<0)tx=0; if(tx>17)tx=17;
+    printf(" ["); for(int i=0;i<18;i++) printf(i==tx?"T":"."); printf("]\n");
     circlePosition cp; hidCircleRead(&cp);
     printf(" Circle: X=%-5d Y=%-5d   \n",cp.dx,cp.dy);
     angularRate gy; hidGyroRead(&gy);
@@ -292,10 +275,10 @@ void showHWTest(){
     printf("\n\x1b[21;1H\x1b[90mLive  B=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  5. CLOCK
-// ═══════════════════════════════════════════════
-void showClock(){
+// -----------------------------------------------
+// 5. CLOCK
+// -----------------------------------------------
+void showClock() {
     cur();
     printf("\x1b[35m== Clock & Date ==\x1b[0m\n\n");
     u64 ms=osGetTime(); time_t s=(time_t)(ms/1000);
@@ -305,22 +288,18 @@ void showClock(){
     printf("  \x1b[32m%02d:%02d:%02d\x1b[0m UTC\n\n",t->tm_hour,t->tm_min,t->tm_sec);
     printf("  %s %d %s %04d\n\n",days[t->tm_wday],t->tm_mday,months[t->tm_mon],t->tm_year+1900);
     printf("  Week:%d  Day:%d/365\n",(t->tm_yday+6)/7,t->tm_yday+1);
-    unsigned long upSec=(unsigned long)(ms/1000);
-    printf("\n  Uptime:%02luh%02lum%02lus\n",upSec/3600,(upSec%3600)/60,upSec%60);
-    // simple clock face with hours
+    unsigned long up=(unsigned long)(ms/1000);
+    printf("\n  Uptime: %02luh%02lum%02lus\n",up/3600,(up%3600)/60,up%60);
     printf("\n  ");
-    for(int h=0;h<24;h++){
-        if(h==t->tm_hour) printf("\x1b[32m*\x1b[0m");
-        else printf(h%6==0?"|":".");
-    }
+    for(int h=0;h<24;h++) printf(h==t->tm_hour?"\x1b[32m*\x1b[0m":(h%6==0?"|":"."));
     printf("\n  0  6  12  18  23\n");
     printf("\n\x1b[21;1H\x1b[90mLive  B=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  6. BUTTON TEST
-// ═══════════════════════════════════════════════
-void showBtnTest(u32 held){
+// -----------------------------------------------
+// 6. BUTTON TEST
+// -----------------------------------------------
+void showBtnTest(u32 held) {
     cur();
     printf("\x1b[36m== Button Test ==\x1b[0m\n\n");
     struct{u32 k;const char* n;}b[]={
@@ -340,10 +319,10 @@ void showBtnTest(u32 held){
     printf("\n\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  7. POWER MENU
-// ═══════════════════════════════════════════════
-void showPowerMenu(int s){
+// -----------------------------------------------
+// 7. POWER MENU
+// -----------------------------------------------
+void showPowerMenu(int s) {
     cur();
     printf("\x1b[31m== Power Options ==\x1b[0m\n\n");
     const char* o[]={"Return to Loader","Reboot System","Return to Home"};
@@ -351,17 +330,17 @@ void showPowerMenu(int s){
     printf("\n\x1b[21;1H\x1b[90mA=Confirm  B=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  8. LED CONTROL
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// 8. LED CONTROL
+// -----------------------------------------------
 const char* ledOpts[LED_N]={"Wifi LED: ON","Wifi LED: OFF","Power: Normal","Power: Sleep","Power: OFF"};
-void showLED(int s){
+void showLED(int s) {
     cur();
     printf("\x1b[36m== LED Control ==\x1b[0m\n\n");
     for(int i=0;i<LED_N;i++) printf(" %s %s\n",s==i?"\x1b[36m>\x1b[0m":" ",ledOpts[i]);
     printf("\n\x1b[21;1H\x1b[90mA=Activate  B=Back\x1b[0m");
 }
-void doLED(int s){
+void doLED(int s) {
     switch(s){
         case 0:MCUHWC_SetWifiLedState(true);           break;
         case 1:MCUHWC_SetWifiLedState(false);          break;
@@ -371,10 +350,10 @@ void doLED(int s){
     }
 }
 
-// ═══════════════════════════════════════════════
-//  9. MINI-GAME: Number Guess
-// ═══════════════════════════════════════════════
-void showGuess(int g,int a,bool won,int tgt){
+// -----------------------------------------------
+// 9. MINI-GAME: Number Guess
+// -----------------------------------------------
+void showGuess(int g,int a,bool won,int tgt) {
     cur();
     printf("\x1b[35m== Fox Guess (1-100) ==\x1b[0m\n\n");
     if(won){
@@ -383,25 +362,23 @@ void showGuess(int g,int a,bool won,int tgt){
     } else {
         printf(" Guess:    \x1b[33m%d\x1b[0m      \n",g);
         printf(" Attempts: %d      \n",a);
-        // progress bar towards answer
         printf(" [");
         for(int i=1;i<=10;i++){
-            int zone=(tgt-1)/10;
-            int gzone=(g-1)/10;
-            printf(i-1==zone?"\x1b[31mT\x1b[0m":(i-1==gzone?"\x1b[33mG\x1b[0m":"-"));
+            int zone=(tgt-1)/10, gzone=(g-1)/10;
+            printf(i-1==zone?"\x1b[31mT\x1b[0m":(i-1==gzone?"\x1b[33mG\x1b[0m":"."));
         }
         printf("]\n");
-        if(a>0){ if(g<tgt) printf(" \x1b[32mGo HIGHER!\x1b[0m   \n");
-                 else      printf(" \x1b[31mGo LOWER! \x1b[0m   \n"); }
-        else printf("              \n");
+        if(a>0){ if(g<tgt) printf(" \x1b[32mGo HIGHER!\x1b[0m\n");
+                 else      printf(" \x1b[31mGo LOWER!\x1b[0m\n"); }
+        else printf("\n");
         printf("\n DPad Up/Down + A\n");
     }
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  10. SNAKE GAME
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// 10. SNAKE GAME
+// -----------------------------------------------
 #define SN_W 38
 #define SN_H 17
 #define SN_MAX 200
@@ -425,8 +402,8 @@ void snakeDraw(Snake& sn){
         if(sn.x[i]>=0&&sn.x[i]<SN_W&&sn.y[i]>=0&&sn.y[i]<SN_H)
             field[sn.y[i]][sn.x[i]]=(i==0?'O':'o');
     for(int r=0;r<SN_H;r++) printf("%s\n",field[r]);
-    if(sn.dead) printf("\x1b[31mGAME OVER! A=Restart\x1b[0m ");
-    else        printf(" DPad=Move  Len:%-4d ",sn.len);
+    if(sn.dead) printf("\x1b[31mGAME OVER! A=Restart\x1b[0m");
+    else        printf(" DPad=Move  Len:%-3d  ",sn.len);
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 void snakeUpdate(Snake& sn,u32 kDown){
@@ -448,9 +425,9 @@ void snakeUpdate(Snake& sn,u32 kDown){
     }
 }
 
-// ═══════════════════════════════════════════════
-//  11. CALCULATOR
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// 11. CALCULATOR
+// -----------------------------------------------
 struct Calc{double val,prev;char op,disp[32],msg[32];bool newInput;};
 void calcInit(Calc& c){c.val=0;c.prev=0;c.op=0;snprintf(c.disp,32,"0");c.newInput=true;c.msg[0]=0;}
 void showCalc(Calc& c,int s){
@@ -493,104 +470,371 @@ void calcPress(Calc& c,int s){
     }
 }
 
-// ═══════════════════════════════════════════════
-//  12. REACTION TIME GAME
-// ═══════════════════════════════════════════════
-enum ReactionState{RX_WAIT,RX_READY,RX_RESULT,RX_TOOSOON};
-struct Reaction{
-    ReactionState rs;
-    u64 startMs,reactionMs;
-    int bestMs,count;
-    u64 waitUntil;
-};
+// -----------------------------------------------
+// 12. REACTION TIME GAME
+// -----------------------------------------------
+enum RxState{RX_WAIT,RX_READY,RX_RESULT,RX_TOOSOON};
+struct Reaction{RxState rs;u64 startMs,reactionMs,waitUntil;int bestMs,count;};
 void reactionInit(Reaction& rx){
-    rx.rs=RX_WAIT;rx.reactionMs=0;rx.bestMs=99999;rx.count=0;
+    rx.rs=RX_WAIT;rx.reactionMs=0;rx.bestMs=99999;rx.count=0;rx.startMs=0;
     rx.waitUntil=osGetTime()+(u64)(2000+rand()%3000);
 }
 void showReaction(Reaction& rx,u32 kDown){
     cur();
     printf("\x1b[35m== Reaction Test ==\x1b[0m\n\n");
     u64 now=osGetTime();
-
     if(rx.rs==RX_WAIT){
         if(now>=rx.waitUntil) rx.rs=RX_READY;
-        printf(" \x1b[90mWaiting...          \x1b[0m\n\n");
-        printf(" Get ready!\n\n");
+        printf(" \x1b[90mWaiting...\x1b[0m\n\n");
         printf(" Press A when screen\n goes GREEN!\n");
-        if(kDown&KEY_A){rx.rs=RX_TOOSOON;}
+        if(kDown&KEY_A) rx.rs=RX_TOOSOON;
     } else if(rx.rs==RX_READY){
-        printf(" \x1b[32m████ PRESS A! ████  \x1b[0m\n\n");
-        printf(" \x1b[32mNOW! NOW! NOW!\x1b[0m\n");
         if(!rx.startMs) rx.startMs=now;
+        printf(" \x1b[32m### PRESS A NOW! ###\x1b[0m\n\n");
+        printf(" \x1b[32mNOW! NOW! NOW!\x1b[0m\n");
         if(kDown&KEY_A){
             rx.reactionMs=now-rx.startMs;
             if((int)rx.reactionMs<rx.bestMs) rx.bestMs=(int)rx.reactionMs;
-            rx.count++;
-            rx.rs=RX_RESULT;
+            rx.count++;rx.rs=RX_RESULT;
         }
     } else if(rx.rs==RX_RESULT){
-        printf(" Time: \x1b[32m%llums\x1b[0m            \n\n",(unsigned long long)rx.reactionMs);
-        printf(" Best: \x1b[33m%dms\x1b[0m              \n",rx.bestMs);
+        printf(" Time: \x1b[32m%llums\x1b[0m\n\n",(unsigned long long)rx.reactionMs);
+        printf(" Best: \x1b[33m%dms\x1b[0m\n",rx.bestMs);
         printf(" Tries:%d\n\n",rx.count);
-        if(rx.reactionMs<200)      printf(" \x1b[32mWOW! Incredible!\x1b[0m\n");
+        if     (rx.reactionMs<200) printf(" \x1b[32mIncredible!\x1b[0m\n");
         else if(rx.reactionMs<300) printf(" \x1b[32mGreat!\x1b[0m\n");
         else if(rx.reactionMs<500) printf(" \x1b[33mGood!\x1b[0m\n");
         else                       printf(" \x1b[31mSlow...\x1b[0m\n");
         printf("\n Press A to try again.\n");
-        if(kDown&KEY_A){
-            rx.rs=RX_WAIT;rx.startMs=0;
-            rx.waitUntil=now+(u64)(2000+rand()%3000);
-        }
-    } else if(rx.rs==RX_TOOSOON){
+        if(kDown&KEY_A){rx.rs=RX_WAIT;rx.startMs=0;rx.waitUntil=now+(u64)(2000+rand()%3000);}
+    } else {
         printf(" \x1b[31mTOO SOON!\x1b[0m\n\n");
         printf(" Wait for GREEN!\n\n");
         printf(" Press A to retry.\n");
-        if(kDown&KEY_A){
-            rx.rs=RX_WAIT;rx.startMs=0;
-            rx.waitUntil=now+(u64)(2000+rand()%3000);
+        if(kDown&KEY_A){rx.rs=RX_WAIT;rx.startMs=0;rx.waitUntil=now+(u64)(2000+rand()%3000);}
+    }
+    printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 13. COLOR TEST (ASCII only)
+// -----------------------------------------------
+void showColorTest(int frame){
+    cur();
+    printf("\x1b[35m== Color Test ==\x1b[0m\n\n");
+    printf(" Normal: ");
+    for(int i=30;i<=37;i++) printf("\x1b[%dm#\x1b[0m",i);
+    printf("\n Bold:   ");
+    for(int i=30;i<=37;i++) printf("\x1b[1;%dm#\x1b[0m",i);
+    printf("\n\n Anim:  [");
+    for(int i=0;i<30;i++){
+        int c=30+(i+frame/4)%8;
+        printf(i==(frame/2)%30?"\x1b[%dm*\x1b[0m":"\x1b[%dm-\x1b[0m",c,c);
+    }
+    printf("]\n\n");
+    const char* txt="DarkFox-3DS v5.0 !";
+    printf(" Text:  ");
+    for(int i=0;txt[i];i++) printf("\x1b[%dm%c\x1b[0m",30+(i+frame/8)%8,txt[i]);
+    printf("\n\n Bars:\n  \x1b[31m");
+    for(int i=0;i<10;i++) printf("#");
+    printf("\x1b[33m");
+    for(int i=0;i<10;i++) printf("#");
+    printf("\x1b[32m");
+    for(int i=0;i<10;i++) printf("#");
+    printf("\x1b[0m\n");
+    printf("\n\x1b[21;1H\x1b[90mLive  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 14. STOPWATCH
+// -----------------------------------------------
+void showStopwatch(u32 kDown){
+    cur();
+    printf("\x1b[32m== Stopwatch ==\x1b[0m\n\n");
+    u64 now=osGetTime();
+    u64 elapsed=0;
+    if(g_swRunning) elapsed=now-g_swStart;
+    else elapsed=g_swStart; // stored elapsed when stopped
+
+    unsigned long ms_part=(unsigned long)(elapsed%1000);
+    unsigned long s_part =(unsigned long)((elapsed/1000)%60);
+    unsigned long m_part =(unsigned long)((elapsed/60000)%60);
+    unsigned long h_part =(unsigned long)(elapsed/3600000);
+
+    printf("  \x1b[32m%02lu:%02lu:%02lu.%03lu\x1b[0m\n\n",h_part,m_part,s_part,ms_part);
+    printf("  %s\n\n",g_swRunning?"\x1b[32m[RUNNING]\x1b[0m":"\x1b[31m[STOPPED]\x1b[0m");
+
+    // ascii progress bar for seconds
+    int spct=(int)(s_part*20/60);
+    printf("  [");
+    for(int i=0;i<20;i++) printf(i<spct?"#":".");
+    printf("]\n\n");
+
+    printf("  A = Start/Stop\n");
+    printf("  X = Reset\n");
+
+    if(kDown&KEY_A){
+        if(g_swRunning){
+            // stop: store elapsed
+            g_swStart=now-g_swStart;
+            g_swRunning=false;
+        } else {
+            // start
+            g_swStart=now-g_swStart;
+            g_swRunning=true;
+        }
+    }
+    if(kDown&KEY_X){
+        g_swStart=0;
+        g_swRunning=false;
+    }
+    printf("\n\x1b[21;1H\x1b[90mA=Start/Stop  X=Reset  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 15. COUNTER
+// -----------------------------------------------
+void showCounter(u32 kDown){
+    cur();
+    printf("\x1b[33m== Counter ==\x1b[0m\n\n");
+    printf("  Value: \x1b[32m%d\x1b[0m\n\n",g_counter);
+
+    // visual bar (0-100)
+    int disp=g_counter%101; if(disp<0)disp=-disp;
+    printf("  [");
+    for(int i=0;i<20;i++) printf(i<disp*20/100?"#":".");
+    printf("]\n\n");
+
+    printf("  A     = +1\n");
+    printf("  B     = Back\n");
+    printf("  DUp   = +10\n");
+    printf("  DDwn  = -10\n");
+    printf("  X     = Reset\n");
+    printf("  L     = -1\n");
+
+    if(kDown&KEY_A)     g_counter++;
+    if(kDown&KEY_L)     g_counter--;
+    if(kDown&KEY_DUP)   g_counter+=10;
+    if(kDown&KEY_DDOWN) g_counter-=10;
+    if(kDown&KEY_X)     g_counter=0;
+
+    printf("\n\x1b[21;1H\x1b[90mA=+1  L=-1  DPad=+-10  X=Reset  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 16. MEMO PAD (simple text display)
+// -----------------------------------------------
+#define MEMO_LINES 8
+#define MEMO_LEN   36
+static char memoLines[MEMO_LINES][MEMO_LEN]={
+    "DarkFox-3DS v5.0",
+    "----------------",
+    "Edit this memo!",
+    "Use A to cycle",
+    "chars, DPad to",
+    "move cursor.",
+    "",
+    ""
+};
+static int memoCurLine=0, memoCurCol=0;
+void showMemo(u32 kDown){
+    cur();
+    printf("\x1b[36m== Memo Pad ==\x1b[0m\n\n");
+    for(int i=0;i<MEMO_LINES;i++){
+        if(i==memoCurLine){
+            // show cursor
+            char tmp[MEMO_LEN+1]; strncpy(tmp,memoLines[i],MEMO_LEN);
+            tmp[MEMO_LEN]=0;
+            int len=(int)strlen(tmp);
+            for(int j=0;j<len;j++){
+                if(j==memoCurCol) printf("\x1b[7m%c\x1b[0m",tmp[j]?tmp[j]:' ');
+                else printf("%c",tmp[j]);
+            }
+            if(memoCurCol>=len) printf("\x1b[7m \x1b[0m");
+            printf("\n");
+        } else {
+            printf("%s\n",memoLines[i]);
+        }
+    }
+    printf("\n");
+    printf("DPad=Move  A=Char+  X=Del\n");
+
+    if(kDown&KEY_DRIGHT){ memoCurCol++; if(memoCurCol>=(int)strlen(memoLines[memoCurLine])+1) memoCurCol=(int)strlen(memoLines[memoCurLine]); }
+    if(kDown&KEY_DLEFT){  memoCurCol--; if(memoCurCol<0)memoCurCol=0; }
+    if(kDown&KEY_DDOWN){  memoCurLine++; if(memoCurLine>=MEMO_LINES)memoCurLine=MEMO_LINES-1; }
+    if(kDown&KEY_DUP){    memoCurLine--; if(memoCurLine<0)memoCurLine=0; }
+    if(kDown&KEY_A){
+        int len=(int)strlen(memoLines[memoCurLine]);
+        if(memoCurCol<len){
+            char c=memoLines[memoCurLine][memoCurCol];
+            if(c>='A'&&c<'Z') memoLines[memoCurLine][memoCurCol]++;
+            else if(c=='Z')   memoLines[memoCurLine][memoCurCol]='a';
+            else if(c>='a'&&c<'z') memoLines[memoCurLine][memoCurCol]++;
+            else if(c=='z')   memoLines[memoCurLine][memoCurCol]='0';
+            else if(c>='0'&&c<'9') memoLines[memoCurLine][memoCurCol]++;
+            else if(c=='9')   memoLines[memoCurLine][memoCurCol]='A';
+            else              memoLines[memoCurLine][memoCurCol]='A';
+        } else if(len<MEMO_LEN-1){
+            memoLines[memoCurLine][len]='A';
+            memoLines[memoCurLine][len+1]=0;
+        }
+    }
+    if(kDown&KEY_X){
+        int len=(int)strlen(memoLines[memoCurLine]);
+        if(memoCurCol<len){
+            memmove(&memoLines[memoCurLine][memoCurCol],
+                    &memoLines[memoCurLine][memoCurCol+1],
+                    len-memoCurCol);
+            if(memoCurCol>0&&memoCurCol>=(int)strlen(memoLines[memoCurLine]))
+                memoCurCol--;
         }
     }
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  13. COLOR TEST
-// ═══════════════════════════════════════════════
-void showColorTest(int frame){
+// -----------------------------------------------
+// 17. COMPASS (gyro-based)
+// -----------------------------------------------
+void showCompass(){
     cur();
-    printf("\x1b[35m== Color & ANSI Test ==\x1b[0m\n\n");
-    // 8 basic colors
-    printf(" ");
-    for(int i=30;i<=37;i++) printf("\x1b[%dm█\x1b[0m",i);
-    printf("  Normal\n ");
-    for(int i=30;i<=37;i++) printf("\x1b[1;%dm█\x1b[0m",i);
-    printf("  Bold\n\n");
-    // animated bar
-    int pos=(frame/2)%36;
-    printf(" [");
-    for(int i=0;i<36;i++){
-        int c=30+(i+frame/4)%8;
-        printf(i==pos?"\x1b[%dm*\x1b[0m":"\x1b[%dm-\x1b[0m",c,c);
-    }
-    printf("]\n\n");
-    // rainbow text
-    const char* txt="DarkFox-3DS v4.0";
-    printf(" ");
-    for(int i=0;txt[i];i++) printf("\x1b[%dm%c\x1b[0m",30+(i+frame/8)%8,txt[i]);
-    printf("\n\n");
-    // gradient bar
-    printf(" ");
-    for(int i=0;i<20;i++){
-        printf(i<7?"\x1b[31m":i<14?"\x1b[33m":"\x1b[32m");
-        printf("█\x1b[0m");
-    }
-    printf("  Gradient\n");
+    printf("\x1b[33m== Compass (Gyro) ==\x1b[0m\n\n");
+    angularRate gy; hidGyroRead(&gy);
+    accelVector ac; hidAccelRead(&ac);
+
+    // simple tilt indicator from accel
+    int tiltX=ac.x/200; if(tiltX>9)tiltX=9;if(tiltX<-9)tiltX=-9;
+    int tiltY=ac.y/200; if(tiltY>9)tiltY=9;if(tiltY<-9)tiltY=-9;
+
+    printf(" Accel X: %-7d\n",ac.x);
+    printf(" Accel Y: %-7d\n",ac.y);
+    printf(" Accel Z: %-7d\n\n",ac.z);
+
+    // tilt cross display
+    printf("         ");
+    for(int i=-3;i<=3;i++) printf(i==tiltX?"^":".");
+    printf("  X-tilt\n");
+    printf("         ");
+    for(int i=-3;i<=3;i++) printf(i==tiltY?"|":".");
+    printf("  Y-tilt\n\n");
+
+    printf(" Gyro X:  %-7d\n",gy.x);
+    printf(" Gyro Y:  %-7d\n",gy.y);
+    printf(" Gyro Z:  %-7d\n",gy.z);
+
+    printf("\n Hold flat for 0 values.\n");
     printf("\n\x1b[21;1H\x1b[90mLive  B=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  14. FILE BROWSER
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// 18. TEMPERATURE CONVERTER
+// -----------------------------------------------
+static int tempVal=0;
+static int tempMode=0; // 0=C->F, 1=F->C, 2=C->K
+void showTempConv(u32 kDown){
+    cur();
+    printf("\x1b[35m== Temp Converter ==\x1b[0m\n\n");
+    const char* modes[]={"Celsius -> Fahrenheit","Fahrenheit -> Celsius","Celsius -> Kelvin"};
+    printf(" Mode: \x1b[33m%s\x1b[0m\n\n",modes[tempMode]);
+    printf(" Input: \x1b[32m%d\x1b[0m\n\n",tempVal);
+
+    double result=0;
+    const char* unit="";
+    if(tempMode==0){ result=tempVal*9.0/5.0+32; unit="F"; }
+    else if(tempMode==1){ result=(tempVal-32)*5.0/9.0; unit="C"; }
+    else { result=tempVal+273.15; unit="K"; }
+
+    printf(" Result: \x1b[32m%.2f %s\x1b[0m\n\n",result,unit);
+    printf(" DUp/DDwn = +/-1\n");
+    printf(" L/R      = +/-10\n");
+    printf(" A        = Switch mode\n");
+    printf(" X        = Reset\n");
+
+    if(kDown&KEY_DUP)   tempVal++;
+    if(kDown&KEY_DDOWN) tempVal--;
+    if(kDown&KEY_R)     tempVal+=10;
+    if(kDown&KEY_L)     tempVal-=10;
+    if(kDown&KEY_A)     tempMode=(tempMode+1)%3;
+    if(kDown&KEY_X)     tempVal=0;
+
+    printf("\n\x1b[21;1H\x1b[90mDPad=+/-  A=Mode  X=Reset  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 19. UNIT CONVERTER
+// -----------------------------------------------
+static int unitVal=0;
+static int unitMode=0;
+#define UNIT_MODES 5
+void showUnitConv(u32 kDown){
+    cur();
+    printf("\x1b[36m== Unit Converter ==\x1b[0m\n\n");
+    const char* modes[UNIT_MODES]={"km -> miles","miles -> km","kg -> lbs","lbs -> kg","m -> feet"};
+    printf(" Mode: \x1b[33m%s\x1b[0m\n\n",modes[unitMode]);
+    printf(" Input: \x1b[32m%d\x1b[0m\n\n",unitVal);
+
+    double r=0; const char* u="";
+    switch(unitMode){
+        case 0: r=unitVal*0.621371; u="mi"; break;
+        case 1: r=unitVal*1.60934;  u="km"; break;
+        case 2: r=unitVal*2.20462;  u="lb"; break;
+        case 3: r=unitVal*0.453592; u="kg"; break;
+        case 4: r=unitVal*3.28084;  u="ft"; break;
+    }
+    printf(" Result: \x1b[32m%.4f %s\x1b[0m\n\n",r,u);
+    printf(" DUp/DDwn = +/-1\n");
+    printf(" L/R      = +/-10\n");
+    printf(" A        = Next mode\n");
+
+    if(kDown&KEY_DUP)   unitVal++;
+    if(kDown&KEY_DDOWN) unitVal--;
+    if(kDown&KEY_R)     unitVal+=10;
+    if(kDown&KEY_L)     unitVal-=10;
+    if(kDown&KEY_A)     { unitMode=(unitMode+1)%UNIT_MODES; unitVal=0; }
+    if(kDown&KEY_X)     unitVal=0;
+
+    printf("\n\x1b[21;1H\x1b[90mDPad=+/-  A=Mode  X=Reset  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// 20. RANDOM GENERATOR
+// -----------------------------------------------
+static int randMin=1, randMax=100, randResult=0;
+static int randField=0; // 0=min 1=max
+void showRandGen(u32 kDown){
+    cur();
+    printf("\x1b[32m== Random Generator ==\x1b[0m\n\n");
+    printf(" Min: %s%d\x1b[0m\n",randField==0?"\x1b[32m":"\x1b[0m",randMin);
+    printf(" Max: %s%d\x1b[0m\n\n",randField==1?"\x1b[32m":"\x1b[0m",randMax);
+    if(randResult)
+        printf(" Result: \x1b[33m%d\x1b[0m\n\n",randResult);
+    else
+        printf(" Press A to roll!\n\n");
+
+    printf(" A      = Roll\n");
+    printf(" DUp    = +1 selected\n");
+    printf(" DDwn   = -1 selected\n");
+    printf(" L/R    = Switch field\n");
+    printf(" X      = Roll 3 dice\n");
+
+    if(kDown&KEY_L||kDown&KEY_R) randField=1-randField;
+    if(kDown&KEY_DUP)   { if(randField==0)randMin++; else randMax++; }
+    if(kDown&KEY_DDOWN) { if(randField==0)randMin--; else randMax--; }
+    if(randMin>randMax) randMin=randMax;
+    if(kDown&KEY_A){
+        if(randMax>randMin) randResult=randMin+rand()%(randMax-randMin+1);
+        else randResult=randMin;
+    }
+    if(kDown&KEY_X){
+        // roll 3 dice
+        int d1=1+rand()%6,d2=1+rand()%6,d3=1+rand()%6;
+        printf("\n Dice: %d + %d + %d = \x1b[33m%d\x1b[0m\n",d1,d2,d3,d1+d2+d3);
+    }
+    printf("\n\x1b[21;1H\x1b[90mA=Roll  DPad=+/-  L/R=Field  B=Back\x1b[0m");
+}
+
+// -----------------------------------------------
+// FILE BROWSER
+// -----------------------------------------------
 struct FBState{
     char path[256],ent[FB_MAX][FB_NL],msg[64];
     bool isDir[FB_MAX],confirmDel;
@@ -656,33 +900,31 @@ void fbInput(FBState& f,u32 kDown){
     if(kDown&KEY_X&&f.cnt&&strcmp(f.ent[f.sel],"..")!=0)f.confirmDel=true;
 }
 
-// ═══════════════════════════════════════════════
-//  15. ABOUT
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// ABOUT
+// -----------------------------------------------
 void showAbout(){
     cur();
-    printf("\x1b[35m== DarkFox-3DS v4.0 ==\x1b[0m\n\n");
+    printf("\x1b[35m== DarkFox-3DS v5.0 ==\x1b[0m\n\n");
     printf(" Developer: DarkFox Team\n\n");
-    printf("  1  System Info\n");
-    printf("  2  File Browser\n");
-    printf("  3  Power Options\n");
-    printf("  4  LED Control\n");
-    printf("  5  Number Guess\n");
-    printf("  6  Network Info\n");
-    printf("  7  Hardware Test\n");
-    printf("  8  Clock & Date\n");
-    printf("  9  Storage Info\n");
+    printf("  1  System Info     13 Reaction Test\n");
+    printf("  2  File Browser    14 Color Test\n");
+    printf("  3  Power Options   15 Stopwatch\n");
+    printf("  4  LED Control     16 Counter\n");
+    printf("  5  Number Guess    17 Memo Pad\n");
+    printf("  6  Network Info    18 Compass\n");
+    printf("  7  Hardware Test   19 Temp Conv\n");
+    printf("  8  Clock & Date    20 Unit Conv\n");
+    printf("  9  Storage Info    21 Random Gen\n");
     printf("  10 Button Tester\n");
     printf("  11 Snake Game\n");
     printf("  12 Calculator\n");
-    printf("  13 Reaction Test\n");
-    printf("  14 Color Test\n");
     printf("\n\x1b[21;1H\x1b[90mB=Back\x1b[0m");
 }
 
-// ═══════════════════════════════════════════════
-//  MAIN
-// ═══════════════════════════════════════════════
+// -----------------------------------------------
+// MAIN
+// -----------------------------------------------
 int main(int argc,char* argv[]){
     gfxInitDefault();
     PrintConsole top,bot;
@@ -701,24 +943,25 @@ int main(int argc,char* argv[]){
     int guess=50,target=1,attempts=0;bool won=false;
     srand((unsigned int)osGetTime());target=rand()%100+1;
 
-    const char* mainOpts[]={
+    const char* mainOpts[MN]={
         " 1.System Info  "," 2.File Browser"," 3.Power       ",
         " 4.LED Control  "," 5.Mini-Game   "," 6.Network     ",
         " 7.HW Test      "," 8.Clock       "," 9.Storage     ",
         "10.Btn Test     ","11.Snake       ","12.Calculator  ",
-        "13.Reaction     ","14.Color Test  ","15.About       "
+        "13.Reaction     ","14.Color Test  ","15.Stopwatch   ",
+        "16.Counter      ","17.Memo Pad    ","18.Compass     ",
+        "19.Temp Conv    ","20.Unit Conv   ","21.Random Gen  ",
+        "22.About        ",""
     };
-    const int MN=15;
 
     while(aptMainLoop()){
         hidScanInput();
         u32 kDown=hidKeysDown(),kHeld=hidKeysHeld();
         if((kDown&KEY_START)&&state==MAIN_MENU)break;
 
-        // Update globals for bottom screen
         g_state=state;
         g_snakeScore=sn.score;
-        g_guessAttempts=attempts;
+        g_attempts=attempts;
 
         bool changed=(state!=prev);
         if(changed){
@@ -731,17 +974,17 @@ int main(int argc,char* argv[]){
             if(state==REACTION_GAME){memset(&rx,0,sizeof(rx));reactionInit(rx);}
         }
 
-        // ── Bottom Screen ──
+        // Bottom screen
         consoleSelect(&bot);
         drawBottom();
 
-        // ── Top Screen ──
+        // Top screen
         consoleSelect(&top);
         colorFrame++;
 
         if(state==MAIN_MENU){
             cur();
-            printf("\x1b[31mDarkFox-3DS v4.0\x1b[0m\n\n");
+            printf("\x1b[31mDarkFox-3DS v5.0\x1b[0m\n\n");
             int half=(MN+1)/2;
             for(int i=0;i<half;i++){
                 int j=i+half;
@@ -757,27 +1000,37 @@ int main(int argc,char* argv[]){
             if(kDown&KEY_A){
                 subSel=0;
                 switch(mainSel){
-                    case 0:state=SYSTEM_INFO;   break; case 1:state=FILE_BROWSER; break;
-                    case 2:state=POWER_MENU;    break; case 3:state=LED_FUN;      break;
-                    case 4:state=MINI_GAME;     break; case 5:state=NETWORK_INFO; break;
-                    case 6:state=HW_TEST;       break; case 7:state=CLOCK_VIEW;   break;
-                    case 8:state=STORAGE_INFO;  break; case 9:state=BTN_TEST;     break;
-                    case 10:state=SNAKE_GAME;   break; case 11:state=CALC;        break;
-                    case 12:state=REACTION_GAME;break; case 13:state=COLOR_TEST;  break;
-                    case 14:state=ABOUT;        break;
+                    case 0: state=SYSTEM_INFO;   break; case 1: state=FILE_BROWSER;  break;
+                    case 2: state=POWER_MENU;    break; case 3: state=LED_FUN;       break;
+                    case 4: state=MINI_GAME;     break; case 5: state=NETWORK_INFO;  break;
+                    case 6: state=HW_TEST;       break; case 7: state=CLOCK_VIEW;    break;
+                    case 8: state=STORAGE_INFO;  break; case 9: state=BTN_TEST;      break;
+                    case 10:state=SNAKE_GAME;    break; case 11:state=CALC;          break;
+                    case 12:state=REACTION_GAME; break; case 13:state=COLOR_TEST;    break;
+                    case 14:state=STOPWATCH;     break; case 15:state=COUNTER;       break;
+                    case 16:state=MEMO_PAD;      break; case 17:state=COMPASS;       break;
+                    case 18:state=TEMP_CONV;     break; case 19:state=UNIT_CONV;     break;
+                    case 20:state=RANDOM_GEN;    break; case 21:state=ABOUT;         break;
                 }
             }
         } else {
             bool back=false;
             switch(state){
-                case SYSTEM_INFO:   showSystemInfo();        if(kDown&KEY_B)back=true; break;
-                case NETWORK_INFO:  showNetworkInfo();       if(kDown&KEY_B)back=true; break;
-                case STORAGE_INFO:  showStorageInfo();       if(kDown&KEY_B)back=true; break;
-                case HW_TEST:       showHWTest();            if(kDown&KEY_B)back=true; break;
-                case CLOCK_VIEW:    showClock();             if(kDown&KEY_B)back=true; break;
-                case BTN_TEST:      showBtnTest(kHeld);      if(kDown&KEY_B)back=true; break;
-                case ABOUT:         showAbout();             if(kDown&KEY_B)back=true; break;
-                case COLOR_TEST:    showColorTest(colorFrame);if(kDown&KEY_B)back=true;break;
+                case SYSTEM_INFO:   showSystemInfo();          if(kDown&KEY_B)back=true; break;
+                case NETWORK_INFO:  showNetworkInfo();         if(kDown&KEY_B)back=true; break;
+                case STORAGE_INFO:  showStorageInfo();         if(kDown&KEY_B)back=true; break;
+                case HW_TEST:       showHWTest();              if(kDown&KEY_B)back=true; break;
+                case CLOCK_VIEW:    showClock();               if(kDown&KEY_B)back=true; break;
+                case BTN_TEST:      showBtnTest(kHeld);        if(kDown&KEY_B)back=true; break;
+                case ABOUT:         showAbout();               if(kDown&KEY_B)back=true; break;
+                case COLOR_TEST:    showColorTest(colorFrame); if(kDown&KEY_B)back=true; break;
+                case COMPASS:       showCompass();             if(kDown&KEY_B)back=true; break;
+                case STOPWATCH:     showStopwatch(kDown);      if(kDown&KEY_B)back=true; break;
+                case COUNTER:       showCounter(kDown);        if(kDown&KEY_B)back=true; break;
+                case MEMO_PAD:      showMemo(kDown);           if(kDown&KEY_B)back=true; break;
+                case TEMP_CONV:     showTempConv(kDown);       if(kDown&KEY_B)back=true; break;
+                case UNIT_CONV:     showUnitConv(kDown);       if(kDown&KEY_B)back=true; break;
+                case RANDOM_GEN:    showRandGen(kDown);        if(kDown&KEY_B)back=true; break;
                 case POWER_MENU:
                     showPowerMenu(subSel);
                     if(kDown&KEY_DUP)   subSel=(subSel-1+3)%3;
