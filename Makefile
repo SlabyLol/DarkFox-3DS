@@ -1,258 +1,194 @@
-name: Build DarkFox-3DS
+#---------------------------------------------------------------------------------
+# DarkFox-3DS Makefile
+# devkitARM + libctru
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
+endif
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+TOPDIR ?= $(CURDIR)
+include $(DEVKITPRO)/rules/3ds.mk
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: devkitpro/devkitarm:20240202
-      env:
-        DEVKITPRO: /opt/devkitpro
-        DEVKITARM: /opt/devkitpro/devkitARM
+#---------------------------------------------------------------------------------
+# TARGET is the name of the output
+# BUILD is the directory where object files & intermediate files will be placed
+# SOURCES is a list of directories containing source code
+# DATA is a list of directories containing data files
+# INCLUDES is a list of directories containing header files
+# GRAPHICS is a list of directories containing graphics files
+# GFXBUILD is the directory where converted graphics files will be placed
+#          If you set this to $(BUILD), then all temporary graphics files will be
+#          in the same folder as the generated object files.
+#
+# NO_SMDH: if set to anything, no SMDH file is generated
+# ROMFS is the directory which contains the RomFS, relative to the Makefile
+# APP_TITLE is the name of the app stored in the SMDH file (or the default if blank)
+# APP_DESCRIPTION is the description of the app stored in the SMDH file (or the default if blank)
+# APP_AUTHOR is the author of the app stored in the SMDH file (or the default if blank)
+# ICON is the filename of the icon (.png), relative to the project folder.
+#   If not set, it attempts to use one of the following (in order):
+#     - <Project name>.png
+#     - icon.png
+#     - <libctru folder>/default_icon.png
+#---------------------------------------------------------------------------------
+TARGET      := DarkFox-3DS
+BUILD       := build
+SOURCES     := source
+DATA        := data
+INCLUDES    := include
+GRAPHICS    := gfx
+ROMFS       :=
 
-    steps:
-      # ─────────────────────────────────────────────
-      # 1. Code auschecken
-      # ─────────────────────────────────────────────
-      - name: Checkout code
-        uses: actions/checkout@v4
+APP_TITLE       := DarkFox-3DS
+APP_DESCRIPTION := A multi-purpose utility for Nintendo 3DS
+APP_AUTHOR      := DarkFox Team
 
-      # ─────────────────────────────────────────────
-      # 2. PATH setzen
-      # ─────────────────────────────────────────────
-      - name: PATH setzen
-        run: |
-          echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
+ICON := resources/icon.png
 
-      # ─────────────────────────────────────────────
-      # 3. Abhängigkeiten installieren
-      # ─────────────────────────────────────────────
-      - name: Abhängigkeiten installieren
-        run: |
-          apt-get update && apt-get install -y \
-            cmake \
-            build-essential \
-            git \
-            unzip \
-            curl \
-            python3 \
-            --no-install-recommends
+#---------------------------------------------------------------------------------
+# options for code generation
+#---------------------------------------------------------------------------------
+ARCH    := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
-      # ─────────────────────────────────────────────
-      # 4. bannertool aus Source bauen
-      # ─────────────────────────────────────────────
-      - name: bannertool bauen
-        run: |
-          git clone https://github.com/Steveice10/bannertool.git /tmp/bannertool
-          cd /tmp/bannertool
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-          cp build/bannertool /usr/local/bin/bannertool
-          chmod +x /usr/local/bin/bannertool
-          echo "bannertool installiert: $(bannertool --version 2>&1 || echo 'OK')"
+CFLAGS  := -g -Wall -O2 -mword-relocations \
+            -ffunction-sections \
+            $(ARCH)
 
-      # ─────────────────────────────────────────────
-      # 5. makerom aus Source bauen
-      # ─────────────────────────────────────────────
-      - name: makerom bauen
-        run: |
-          git clone https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
-          cd /tmp/Project_CTR/makerom
-          make
-          cp makerom /usr/local/bin/makerom
-          chmod +x /usr/local/bin/makerom
-          echo "makerom installiert: $(makerom --version 2>&1 || echo 'OK')"
+CFLAGS  += $(INCLUDE) -DARM11 -D_3DS
 
-      # ─────────────────────────────────────────────
-      # 6. Projekt bauen → erzeugt .elf + .3dsx
-      # ─────────────────────────────────────────────
-      - name: Build project (3DSX + ELF)
-        run: make
+CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 
-      # ─────────────────────────────────────────────
-      # 7. resources/ vorbereiten falls nicht vorhanden
-      #    (Stub-Dateien für CI – ersetze durch echte Assets)
-      # ─────────────────────────────────────────────
-      - name: Fehlende Resources erstellen (Stubs)
-        run: |
-          mkdir -p resources
+ASFLAGS := -g $(ARCH)
+LDFLAGS  = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-          # icon.png (48x48) – nur wenn nicht vorhanden
-          if [ ! -f resources/icon.png ]; then
-            echo "⚠ Kein icon.png gefunden – erstelle Placeholder"
-            python3 -c "
-          import struct, zlib
+LIBS := -lctru -lm
 
-          def write_png(path, w, h, color=(100, 100, 180)):
-              def chunk(tag, data):
-                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
-                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
-              raw = b''
-              for _ in range(h):
-                  row = b'\x00'
-                  for _ in range(w):
-                      row += bytes(color) + b'\xff'
-                  raw += row
-              idat = zlib.compress(raw)
-              with open(path, 'wb') as f:
-                  f.write(b'\x89PNG\r\n\x1a\n')
-                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
-                  f.write(chunk(b'IDAT', idat))
-                  f.write(chunk(b'IEND', b''))
-          write_png('resources/icon.png', 48, 48)
-          "
-          fi
+#---------------------------------------------------------------------------------
+# list of directories containing libraries, this must be the top level containing
+# include and lib directories
+#---------------------------------------------------------------------------------
+LIBDIRS := $(CTRULIB)
 
-          # banner.png (256x128) – nur wenn nicht vorhanden
-          if [ ! -f resources/banner.png ]; then
-            echo "⚠ Kein banner.png gefunden – erstelle Placeholder"
-            python3 -c "
-          import struct, zlib
+#---------------------------------------------------------------------------------
+# no real need to edit anything past this point unless you need to add additional
+# rules for different file extensions
+#---------------------------------------------------------------------------------
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+#---------------------------------------------------------------------------------
 
-          def write_png(path, w, h, color=(30, 30, 60)):
-              def chunk(tag, data):
-                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
-                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
-              raw = b''
-              for _ in range(h):
-                  row = b'\x00'
-                  for _ in range(w):
-                      row += bytes(color) + b'\xff'
-                  raw += row
-              idat = zlib.compress(raw)
-              with open(path, 'wb') as f:
-                  f.write(b'\x89PNG\r\n\x1a\n')
-                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
-                  f.write(chunk(b'IDAT', idat))
-                  f.write(chunk(b'IEND', b''))
-          write_png('resources/banner.png', 256, 128)
-          "
-          fi
+export OUTPUT  := $(CURDIR)/$(TARGET)
+export TOPDIR  := $(CURDIR)
 
-          # audio.wav (stumm, 1 Sek.) – nur wenn nicht vorhanden
-          if [ ! -f resources/audio.wav ]; then
-            echo "⚠ Kein audio.wav gefunden – erstelle stille WAV"
-            python3 -c "
-          import struct
-          sample_rate = 22050
-          num_samples = sample_rate  # 1 Sekunde
-          data_size   = num_samples * 2
-          with open('resources/audio.wav', 'wb') as f:
-              f.write(b'RIFF')
-              f.write(struct.pack('<I', 36 + data_size))
-              f.write(b'WAVE')
-              f.write(b'fmt ')
-              f.write(struct.pack('<IHHIIHH', 16, 1, 1, sample_rate, sample_rate*2, 2, 16))
-              f.write(b'data')
-              f.write(struct.pack('<I', data_size))
-              f.write(b'\x00' * data_size)
-          "
-          fi
+export VPATH   := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+                  $(foreach dir,$(DATA),$(CURDIR)/$(dir)) \
+                  $(foreach dir,$(GRAPHICS),$(CURDIR)/$(dir))
 
-          # app.rsf – nur wenn nicht vorhanden
-          if [ ! -f resources/app.rsf ]; then
-            echo "⚠ Kein app.rsf gefunden – erstelle Standard-RSF"
-            cat > resources/app.rsf << 'RSF'
-          BasicInfo:
-            Title:           DarkFox-3DS
-            CompanyCode:     "0F"
-            ProductCode:     CTR-P-DFOX
-            ContentType:     Application
+export DEPSDIR := $(CURDIR)/$(BUILD)
 
-          Option:
-            UseOnSD:          true
-            FreeProductCode:  true
-            MediaFootPadding: false
-            EnableCrypt:      false
-            EnableCompress:   false
+CFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+CPPFILES    := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+SFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+PICAFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))
+SHLISTFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
+GFXFILES    := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
+BINFILES    := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-          Rom:
-            HostRoot: ""
+#---------------------------------------------------------------------------------
+# use CXX for linking C++ projects, CC for standard C
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(CPPFILES)),)
+    export LD := $(CC)
+else
+    export LD := $(CXX)
+endif
 
-          ExeFs:
-            StackSize:        0x10000
-            RemasterVersion:  0
+#---------------------------------------------------------------------------------
+export OFILES_SOURCES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
 
-          SystemControlInfo:
-            SaveDataSize:     0x8000
-          RSF
-          fi
+export OFILES_BIN := $(addsuffix .o,$(BINFILES))
 
-          echo "=== Resources ==="
-          ls -la resources/
+export OFILES := $(PICAFILES:.v.pica=.shbin.o) \
+                 $(SHLISTFILES:.shlist=.shbin.o) \
+                 $(if $(strip $(GFXFILES)),$(GFXFILES:.t3s=.t3x.o),) \
+                 $(OFILES_BIN) \
+                 $(OFILES_SOURCES)
 
-      # ─────────────────────────────────────────────
-      # 8. SMDH + Banner + CIA bauen
-      # ─────────────────────────────────────────────
-      - name: CIA bauen
-        run: |
-          # ELF-Datei suchen
-          ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
-          if [ -z "$ELF" ]; then
-            echo "❌ Keine .elf Datei gefunden!"
-            exit 1
-          fi
-          echo "✅ ELF gefunden: $ELF"
+export HFILES := $(PICAFILES:.v.pica=_shbin.h) $(SHLISTFILES:.shlist=_shbin.h) \
+                 $(addsuffix .h,$(subst .,_,$(BINFILES))) \
+                 $(GFXFILES:.t3s=.t3x.h)
 
-          # SMDH erstellen
-          bannertool makesmdh \
-            -s "DarkFox-3DS" \
-            -l "DarkFox-3DS Homebrew" \
-            -p "DarkFox Team" \
-            -i resources/icon.png \
-            -o DarkFox.smdh
+export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                  $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                  -I$(CURDIR)/$(BUILD)
 
-          # Banner erstellen
-          bannertool makebanner \
-            -i resources/banner.png \
-            -a resources/audio.wav \
-            -o DarkFox.bnr
+export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-          # CIA erstellen (ohne -logo für Homebrew)
-          makerom -f cia \
-            -target t \
-            -exefslogo \
-            -o DarkFox.cia \
-            -elf "$ELF" \
-            -rsf resources/app.rsf \
-            -banner DarkFox.bnr \
-            -icon DarkFox.smdh
+export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
 
-          echo "✅ CIA erfolgreich erstellt"
+ifeq ($(strip $(ICON)),)
+    icons := $(wildcard *.png)
+    ifneq (,$(findstring $(TARGET).png,$(icons)))
+        export APP_ICON := $(TOPDIR)/$(TARGET).png
+    else
+        ifneq (,$(findstring icon.png,$(icons)))
+            export APP_ICON := $(TOPDIR)/icon.png
+        endif
+    endif
+else
+    export APP_ICON := $(TOPDIR)/$(ICON)
+endif
 
-      # ─────────────────────────────────────────────
-      # 9. Build-Ausgabe prüfen
-      # ─────────────────────────────────────────────
-      - name: Build-Ausgabe prüfen
-        run: |
-          echo "=== Alle Build-Dateien ==="
-          find . -maxdepth 2 \( \
-            -name "*.3dsx" -o \
-            -name "*.cia"  -o \
-            -name "*.elf"  -o \
-            -name "*.smdh" -o \
-            -name "*.bnr"  \
-          \) 2>/dev/null | sort
+ifeq ($(strip $(NO_SMDH)),)
+    export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
+endif
 
-          echo ""
-          echo "=== Dateigrößen ==="
-          ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
+ifneq ($(ROMFS),)
+    export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
+endif
 
-      # ─────────────────────────────────────────────
-      # 10. Artifacts hochladen
-      # ─────────────────────────────────────────────
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: DarkFox-3DS-build
-          path: |
-            ${{ github.workspace }}/*.3dsx
-            ${{ github.workspace }}/*.cia
-            ${{ github.workspace }}/*.smdh
-            ${{ github.workspace }}/*.elf
-          if-no-files-found: error
-          retention-days: 30
+.PHONY: $(BUILD) clean all
+
+#---------------------------------------------------------------------------------
+all: $(BUILD)
+
+$(BUILD):
+	@[ -d $@ ] || mkdir -p $@
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+
+#---------------------------------------------------------------------------------
+clean:
+	@echo clean ...
+	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf
+
+#---------------------------------------------------------------------------------
+else
+#---------------------------------------------------------------------------------
+# main targets
+#---------------------------------------------------------------------------------
+$(OUTPUT).3dsx: $(OUTPUT).elf $(_3DSXDEPS)
+
+$(OFILES_SOURCES): $(HFILES)
+
+#---------------------------------------------------------------------------------
+%.bin.o	%_bin.h :	%.bin
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	@$(bin2o)
+
+#---------------------------------------------------------------------------------
+%.t3x.o	%.t3x.h :	%.t3s
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	@tex3ds -i $< -H $*.t3x.h -d $*.d -o $(TOPDIR)/$(BUILD)/$*.t3x
+	@bin2s $(TOPDIR)/$(BUILD)/$*.t3x | $(AS) -o $@
+	@echo "extern const u8" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"_end[];" > `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
+	@echo "extern const u8" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"[];"       >> `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
+	@echo "extern const u32" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"_size;"  >> `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
+
+-include $(DEPSDIR)/*.d
+
+#---------------------------------------------------------------------------------------
+endif
+#---------------------------------------------------------------------------------------
