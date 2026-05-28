@@ -1,98 +1,258 @@
-ifeq ($(strip $(DEVKITARM)),)
-$(error "Please set DEVKITARM in your environment. export DEVKITARM=<path to>devkitARM")
-endif
+name: Build DarkFox-3DS
 
-include $(DEVKITARM)/3ds_rules
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
-TARGET		:=	DarkFox-3DS
-BUILD		:=	build
-SOURCES		:=	source
-INCLUDES	:=	include
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkitarm:20240202
+      env:
+        DEVKITPRO: /opt/devkitpro
+        DEVKITARM: /opt/devkitpro/devkitARM
 
-# Pfad zur libctru
-CTRU_LIB_PATH := /opt/devkitpro/libctru/lib
+    steps:
+      # ─────────────────────────────────────────────
+      # 1. Code auschecken
+      # ─────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-# ARCH explizit setzen – libctru ist mit armv6k + hard-float VFP gebaut.
-# Ohne diese Flags entsteht ein ABI-Mismatch beim Linken ("uses VFP register arguments ... does not")
-ARCH	:=	-march=armv6k -mtune=mpcore -mfloat-abi=hard -mfpu=vfp -mtp=soft
+      # ─────────────────────────────────────────────
+      # 2. PATH setzen
+      # ─────────────────────────────────────────────
+      - name: PATH setzen
+        run: |
+          echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-CFLAGS	:=	-g -Wall -O2 -mword-relocations \
-			-fomit-frame-pointer -ffunction-sections \
-			$(ARCH)
+      # ─────────────────────────────────────────────
+      # 3. Abhängigkeiten installieren
+      # ─────────────────────────────────────────────
+      - name: Abhängigkeiten installieren
+        run: |
+          apt-get update && apt-get install -y \
+            cmake \
+            build-essential \
+            git \
+            unzip \
+            curl \
+            python3 \
+            --no-install-recommends
 
-CFLAGS	+=	$(INCLUDE) -D__3DS__
+      # ─────────────────────────────────────────────
+      # 4. bannertool aus Source bauen
+      # ─────────────────────────────────────────────
+      - name: bannertool bauen
+        run: |
+          git clone https://github.com/Steveice10/bannertool.git /tmp/bannertool
+          cd /tmp/bannertool
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          cp build/bannertool /usr/local/bin/bannertool
+          chmod +x /usr/local/bin/bannertool
+          echo "bannertool installiert: $(bannertool --version 2>&1 || echo 'OK')"
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+      # ─────────────────────────────────────────────
+      # 5. makerom aus Source bauen
+      # ─────────────────────────────────────────────
+      - name: makerom bauen
+        run: |
+          git clone https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
+          cd /tmp/Project_CTR/makerom
+          make
+          cp makerom /usr/local/bin/makerom
+          chmod +x /usr/local/bin/makerom
+          echo "makerom installiert: $(makerom --version 2>&1 || echo 'OK')"
 
-ASFLAGS	:=	-g $(ARCH)
+      # ─────────────────────────────────────────────
+      # 6. Projekt bauen → erzeugt .elf + .3dsx
+      # ─────────────────────────────────────────────
+      - name: Build project (3DSX + ELF)
+        run: make
 
-# 3dsx_crt0.o per find im gesamten devkitpro-Baum suchen
-CRT0_PATH	:=	$(shell find /opt/devkitpro -name "3dsx_crt0.o" 2>/dev/null | head -1)
+      # ─────────────────────────────────────────────
+      # 7. resources/ vorbereiten falls nicht vorhanden
+      #    (Stub-Dateien für CI – ersetze durch echte Assets)
+      # ─────────────────────────────────────────────
+      - name: Fehlende Resources erstellen (Stubs)
+        run: |
+          mkdir -p resources
 
-ifeq ($(CRT0_PATH),)
-  $(error "FEHLER: 3dsx_crt0.o nicht gefunden! Bitte 3ds-dev installieren: dkp-pacman -S 3ds-dev")
-endif
+          # icon.png (48x48) – nur wenn nicht vorhanden
+          if [ ! -f resources/icon.png ]; then
+            echo "⚠ Kein icon.png gefunden – erstelle Placeholder"
+            python3 -c "
+          import struct, zlib
 
-CRT0_DIR	:=	$(dir $(CRT0_PATH))
-$(info 3dsx_crt0.o gefunden: $(CRT0_PATH))
+          def write_png(path, w, h, color=(100, 100, 180)):
+              def chunk(tag, data):
+                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
+              raw = b''
+              for _ in range(h):
+                  row = b'\x00'
+                  for _ in range(w):
+                      row += bytes(color) + b'\xff'
+                  raw += row
+              idat = zlib.compress(raw)
+              with open(path, 'wb') as f:
+                  f.write(b'\x89PNG\r\n\x1a\n')
+                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
+                  f.write(chunk(b'IDAT', idat))
+                  f.write(chunk(b'IEND', b''))
+          write_png('resources/icon.png', 48, 48)
+          "
+          fi
 
-LDFLAGS	:=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-LDFLAGS	+=	-B$(CRT0_DIR)
-LDFLAGS	+=	-L$(CTRU_LIB_PATH) -L$(DEVKITPRO)/libctru/lib
+          # banner.png (256x128) – nur wenn nicht vorhanden
+          if [ ! -f resources/banner.png ]; then
+            echo "⚠ Kein banner.png gefunden – erstelle Placeholder"
+            python3 -c "
+          import struct, zlib
 
-LIBS	:= -lctru -lm
+          def write_png(path, w, h, color=(30, 30, 60)):
+              def chunk(tag, data):
+                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
+              raw = b''
+              for _ in range(h):
+                  row = b'\x00'
+                  for _ in range(w):
+                      row += bytes(color) + b'\xff'
+                  raw += row
+              idat = zlib.compress(raw)
+              with open(path, 'wb') as f:
+                  f.write(b'\x89PNG\r\n\x1a\n')
+                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
+                  f.write(chunk(b'IDAT', idat))
+                  f.write(chunk(b'IEND', b''))
+          write_png('resources/banner.png', 256, 128)
+          "
+          fi
 
-ifneq ($(BUILD),$(notdir $(CURDIR)))
+          # audio.wav (stumm, 1 Sek.) – nur wenn nicht vorhanden
+          if [ ! -f resources/audio.wav ]; then
+            echo "⚠ Kein audio.wav gefunden – erstelle stille WAV"
+            python3 -c "
+          import struct
+          sample_rate = 22050
+          num_samples = sample_rate  # 1 Sekunde
+          data_size   = num_samples * 2
+          with open('resources/audio.wav', 'wb') as f:
+              f.write(b'RIFF')
+              f.write(struct.pack('<I', 36 + data_size))
+              f.write(b'WAVE')
+              f.write(b'fmt ')
+              f.write(struct.pack('<IHHIIHH', 16, 1, 1, sample_rate, sample_rate*2, 2, 16))
+              f.write(b'data')
+              f.write(struct.pack('<I', data_size))
+              f.write(b'\x00' * data_size)
+          "
+          fi
 
-export OUTPUT	:=	$(CURDIR)/$(TARGET)
-export TOPDIR	:=	$(CURDIR)
+          # app.rsf – nur wenn nicht vorhanden
+          if [ ! -f resources/app.rsf ]; then
+            echo "⚠ Kein app.rsf gefunden – erstelle Standard-RSF"
+            cat > resources/app.rsf << 'RSF'
+          BasicInfo:
+            Title:           DarkFox-3DS
+            CompanyCode:     "0F"
+            ProductCode:     CTR-P-DFOX
+            ContentType:     Application
 
-export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir))
-export DEPSDIR	:=	$(CURDIR)/$(BUILD)
+          Option:
+            UseOnSD:          true
+            FreeProductCode:  true
+            MediaFootPadding: false
+            EnableCrypt:      false
+            EnableCompress:   false
 
-CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+          Rom:
+            HostRoot: ""
 
-export OFILES	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-					-I$(DEVKITPRO)/libctru/include \
-					-I$(CURDIR)/$(BUILD)
+          ExeFs:
+            StackSize:        0x10000
+            RemasterVersion:  0
 
-.PHONY: $(BUILD) clean all
+          SystemControlInfo:
+            SaveDataSize:     0x8000
+          RSF
+          fi
 
-all: $(BUILD)
+          echo "=== Resources ==="
+          ls -la resources/
 
-$(BUILD):
-	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+      # ─────────────────────────────────────────────
+      # 8. SMDH + Banner + CIA bauen
+      # ─────────────────────────────────────────────
+      - name: CIA bauen
+        run: |
+          # ELF-Datei suchen
+          ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
+          if [ -z "$ELF" ]; then
+            echo "❌ Keine .elf Datei gefunden!"
+            exit 1
+          fi
+          echo "✅ ELF gefunden: $ELF"
 
-clean:
-	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(TARGET).elf $(TARGET).smdh
+          # SMDH erstellen
+          bannertool makesmdh \
+            -s "DarkFox-3DS" \
+            -l "DarkFox-3DS Homebrew" \
+            -p "DarkFox Team" \
+            -i resources/icon.png \
+            -o DarkFox.smdh
 
-else
+          # Banner erstellen
+          bannertool makebanner \
+            -i resources/banner.png \
+            -a resources/audio.wav \
+            -o DarkFox.bnr
 
-DEPENDS	:=	$(OFILES:.o=.d)
+          # CIA erstellen (ohne -logo für Homebrew)
+          makerom -f cia \
+            -target t \
+            -exefslogo \
+            -o DarkFox.cia \
+            -elf "$ELF" \
+            -rsf resources/app.rsf \
+            -banner DarkFox.bnr \
+            -icon DarkFox.smdh
 
-$(OUTPUT).3dsx	:	$(OUTPUT).elf
+          echo "✅ CIA erfolgreich erstellt"
 
-$(OUTPUT).elf	:	$(OFILES)
-	@echo linking $(notdir $@)
-	$(CXX) $(LDFLAGS) $(OFILES) $(LIBS) -o $@
+      # ─────────────────────────────────────────────
+      # 9. Build-Ausgabe prüfen
+      # ─────────────────────────────────────────────
+      - name: Build-Ausgabe prüfen
+        run: |
+          echo "=== Alle Build-Dateien ==="
+          find . -maxdepth 2 \( \
+            -name "*.3dsx" -o \
+            -name "*.cia"  -o \
+            -name "*.elf"  -o \
+            -name "*.smdh" -o \
+            -name "*.bnr"  \
+          \) 2>/dev/null | sort
 
-%.o: %.cpp
-	@echo $(notdir $<)
-	$(CXX) -MMD -MP -MF $(DEPSDIR)/$*.d $(CXXFLAGS) -c $< -o $@
+          echo ""
+          echo "=== Dateigrößen ==="
+          ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
 
-%.o: %.c
-	@echo $(notdir $<)
-	$(CC) -MMD -MP -MF $(DEPSDIR)/$*.d $(CFLAGS) -c $< -o $@
-
-%.o: %.s
-	@echo $(notdir $<)
-	$(AS) -g $(ASFLAGS) -c $< -o $@
-
--include $(DEPENDS)
-
-endif
+      # ─────────────────────────────────────────────
+      # 10. Artifacts hochladen
+      # ─────────────────────────────────────────────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DarkFox-3DS-build
+          path: |
+            ${{ github.workspace }}/*.3dsx
+            ${{ github.workspace }}/*.cia
+            ${{ github.workspace }}/*.smdh
+            ${{ github.workspace }}/*.elf
+          if-no-files-found: error
+          retention-days: 30
