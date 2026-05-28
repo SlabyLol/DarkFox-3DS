@@ -1,4 +1,5 @@
 name: Build DarkFox-3DS
+
 on:
   push:
     branches: [ main ]
@@ -14,65 +15,237 @@ jobs:
         DEVKITARM: /opt/devkitpro/devkitARM
 
     steps:
+      # ─────────────────────────────────────────────
+      # 1. Code auschecken
+      # ─────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────
+      # 2. PATH setzen
+      # ─────────────────────────────────────────────
       - name: PATH setzen
         run: |
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      - name: makerom & bannertool installieren
+      # ─────────────────────────────────────────────
+      # 3. Abhängigkeiten installieren
+      # ─────────────────────────────────────────────
+      - name: Abhängigkeiten installieren
         run: |
-          # bannertool
-          curl -L https://github.com/Steveice10/bannertool/releases/download/1.2.0/bannertool-linux-x86_64.zip -o bannertool.zip
-          unzip bannertool.zip -d /usr/local/bin/
+          apt-get update && apt-get install -y \
+            cmake \
+            build-essential \
+            git \
+            unzip \
+            curl \
+            python3 \
+            --no-install-recommends
+
+      # ─────────────────────────────────────────────
+      # 4. bannertool aus Source bauen
+      # ─────────────────────────────────────────────
+      - name: bannertool bauen
+        run: |
+          git clone https://github.com/Steveice10/bannertool.git /tmp/bannertool
+          cd /tmp/bannertool
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          cp build/bannertool /usr/local/bin/bannertool
           chmod +x /usr/local/bin/bannertool
+          echo "bannertool installiert: $(bannertool --version 2>&1 || echo 'OK')"
 
-          # makerom
-          curl -L https://github.com/3DSGuy/Project_CTR/releases/download/makerom-v0.18.4/makerom-v0.18.4-ubuntu_x86_64.zip -o makerom.zip
-          unzip makerom.zip -d /usr/local/bin/
+      # ─────────────────────────────────────────────
+      # 5. makerom aus Source bauen
+      # ─────────────────────────────────────────────
+      - name: makerom bauen
+        run: |
+          git clone https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
+          cd /tmp/Project_CTR/makerom
+          make
+          cp makerom /usr/local/bin/makerom
           chmod +x /usr/local/bin/makerom
+          echo "makerom installiert: $(makerom --version 2>&1 || echo 'OK')"
 
-          # Versionen prüfen
-          bannertool --version || true
-          makerom --version || true
-
-      - name: Build project (3DSX)
+      # ─────────────────────────────────────────────
+      # 6. Projekt bauen → erzeugt .elf + .3dsx
+      # ─────────────────────────────────────────────
+      - name: Build project (3DSX + ELF)
         run: make
 
+      # ─────────────────────────────────────────────
+      # 7. resources/ vorbereiten falls nicht vorhanden
+      #    (Stub-Dateien für CI – ersetze durch echte Assets)
+      # ─────────────────────────────────────────────
+      - name: Fehlende Resources erstellen (Stubs)
+        run: |
+          mkdir -p resources
+
+          # icon.png (48x48) – nur wenn nicht vorhanden
+          if [ ! -f resources/icon.png ]; then
+            echo "⚠ Kein icon.png gefunden – erstelle Placeholder"
+            python3 -c "
+          import struct, zlib
+
+          def write_png(path, w, h, color=(100, 100, 180)):
+              def chunk(tag, data):
+                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
+              raw = b''
+              for _ in range(h):
+                  row = b'\x00'
+                  for _ in range(w):
+                      row += bytes(color) + b'\xff'
+                  raw += row
+              idat = zlib.compress(raw)
+              with open(path, 'wb') as f:
+                  f.write(b'\x89PNG\r\n\x1a\n')
+                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
+                  f.write(chunk(b'IDAT', idat))
+                  f.write(chunk(b'IEND', b''))
+          write_png('resources/icon.png', 48, 48)
+          "
+          fi
+
+          # banner.png (256x128) – nur wenn nicht vorhanden
+          if [ ! -f resources/banner.png ]; then
+            echo "⚠ Kein banner.png gefunden – erstelle Placeholder"
+            python3 -c "
+          import struct, zlib
+
+          def write_png(path, w, h, color=(30, 30, 60)):
+              def chunk(tag, data):
+                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
+              raw = b''
+              for _ in range(h):
+                  row = b'\x00'
+                  for _ in range(w):
+                      row += bytes(color) + b'\xff'
+                  raw += row
+              idat = zlib.compress(raw)
+              with open(path, 'wb') as f:
+                  f.write(b'\x89PNG\r\n\x1a\n')
+                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
+                  f.write(chunk(b'IDAT', idat))
+                  f.write(chunk(b'IEND', b''))
+          write_png('resources/banner.png', 256, 128)
+          "
+          fi
+
+          # audio.wav (stumm, 1 Sek.) – nur wenn nicht vorhanden
+          if [ ! -f resources/audio.wav ]; then
+            echo "⚠ Kein audio.wav gefunden – erstelle stille WAV"
+            python3 -c "
+          import struct
+          sample_rate = 22050
+          num_samples = sample_rate  # 1 Sekunde
+          data_size   = num_samples * 2
+          with open('resources/audio.wav', 'wb') as f:
+              f.write(b'RIFF')
+              f.write(struct.pack('<I', 36 + data_size))
+              f.write(b'WAVE')
+              f.write(b'fmt ')
+              f.write(struct.pack('<IHHIIHH', 16, 1, 1, sample_rate, sample_rate*2, 2, 16))
+              f.write(b'data')
+              f.write(struct.pack('<I', data_size))
+              f.write(b'\x00' * data_size)
+          "
+          fi
+
+          # app.rsf – nur wenn nicht vorhanden
+          if [ ! -f resources/app.rsf ]; then
+            echo "⚠ Kein app.rsf gefunden – erstelle Standard-RSF"
+            cat > resources/app.rsf << 'RSF'
+          BasicInfo:
+            Title:           DarkFox-3DS
+            CompanyCode:     "0F"
+            ProductCode:     CTR-P-DFOX
+            ContentType:     Application
+
+          Option:
+            UseOnSD:          true
+            FreeProductCode:  true
+            MediaFootPadding: false
+            EnableCrypt:      false
+            EnableCompress:   false
+
+          Rom:
+            HostRoot: ""
+
+          ExeFs:
+            StackSize:        0x10000
+            RemasterVersion:  0
+
+          SystemControlInfo:
+            SaveDataSize:     0x8000
+          RSF
+          fi
+
+          echo "=== Resources ==="
+          ls -la resources/
+
+      # ─────────────────────────────────────────────
+      # 8. SMDH + Banner + CIA bauen
+      # ─────────────────────────────────────────────
       - name: CIA bauen
         run: |
-          # Banner + Icon generieren (passe Pfade an dein Projekt an)
+          # ELF-Datei suchen
+          ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
+          if [ -z "$ELF" ]; then
+            echo "❌ Keine .elf Datei gefunden!"
+            exit 1
+          fi
+          echo "✅ ELF gefunden: $ELF"
+
+          # SMDH erstellen
           bannertool makesmdh \
             -s "DarkFox-3DS" \
-            -l "DarkFox-3DS Application" \
-            -p "Author" \
+            -l "DarkFox-3DS Homebrew" \
+            -p "DarkFox Team" \
             -i resources/icon.png \
             -o DarkFox.smdh
 
+          # Banner erstellen
           bannertool makebanner \
             -i resources/banner.png \
             -a resources/audio.wav \
             -o DarkFox.bnr
 
-          # CIA erstellen
+          # CIA erstellen (ohne -logo für Homebrew)
           makerom -f cia \
             -target t \
             -exefslogo \
             -o DarkFox.cia \
-            -elf DarkFox.elf \
+            -elf "$ELF" \
             -rsf resources/app.rsf \
             -banner DarkFox.bnr \
-            -icon DarkFox.smdh \
+            -icon DarkFox.smdh
 
+          echo "✅ CIA erfolgreich erstellt"
+
+      # ─────────────────────────────────────────────
+      # 9. Build-Ausgabe prüfen
+      # ─────────────────────────────────────────────
       - name: Build-Ausgabe prüfen
         run: |
-          echo "=== Verzeichnis ==="
-          ls -la
-          echo "=== Dateien suchen ==="
-          find . -name "*.3dsx" -o -name "*.cia" -o -name "*.elf" -o -name "*.smdh" 2>/dev/null
+          echo "=== Alle Build-Dateien ==="
+          find . -maxdepth 2 \( \
+            -name "*.3dsx" -o \
+            -name "*.cia"  -o \
+            -name "*.elf"  -o \
+            -name "*.smdh" -o \
+            -name "*.bnr"  \
+          \) 2>/dev/null | sort
 
-      - name: Upload artifact
+          echo ""
+          echo "=== Dateigrößen ==="
+          ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
+
+      # ─────────────────────────────────────────────
+      # 10. Artifacts hochladen
+      # ─────────────────────────────────────────────
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: DarkFox-3DS-build
@@ -82,3 +255,4 @@ jobs:
             ${{ github.workspace }}/*.smdh
             ${{ github.workspace }}/*.elf
           if-no-files-found: error
+          retention-days: 30
