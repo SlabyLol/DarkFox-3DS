@@ -64,7 +64,6 @@ jobs:
             -rsf resources/app.rsf \
             -banner DarkFox.bnr \
             -icon DarkFox.smdh \
-            -logo resources/logo.bcma.lz
 
       - name: Build-Ausgabe prüfen
         run: |
