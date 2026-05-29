@@ -1,6 +1,5 @@
 #---------------------------------------------------------------------------------
 # DarkFox-3DS Makefile
-# devkitARM + libctru
 #---------------------------------------------------------------------------------
 .SUFFIXES:
 #---------------------------------------------------------------------------------
@@ -9,29 +8,22 @@ $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/de
 endif
 
 TOPDIR ?= $(CURDIR)
-include $(DEVKITPRO)/rules/3ds.mk
 
-#---------------------------------------------------------------------------------
-# TARGET is the name of the output
-# BUILD is the directory where object files & intermediate files will be placed
-# SOURCES is a list of directories containing source code
-# DATA is a list of directories containing data files
-# INCLUDES is a list of directories containing header files
-# GRAPHICS is a list of directories containing graphics files
-# GFXBUILD is the directory where converted graphics files will be placed
-#          If you set this to $(BUILD), then all temporary graphics files will be
-#          in the same folder as the generated object files.
-#
-# NO_SMDH: if set to anything, no SMDH file is generated
-# ROMFS is the directory which contains the RomFS, relative to the Makefile
-# APP_TITLE is the name of the app stored in the SMDH file (or the default if blank)
-# APP_DESCRIPTION is the description of the app stored in the SMDH file (or the default if blank)
-# APP_AUTHOR is the author of the app stored in the SMDH file (or the default if blank)
-# ICON is the filename of the icon (.png), relative to the project folder.
-#   If not set, it attempts to use one of the following (in order):
-#     - <Project name>.png
-#     - icon.png
-#     - <libctru folder>/default_icon.png
+# devkitarm-rules 1.6.x änderte den Installationspfad –
+# beide Varianten werden geprüft
+RULES_MK := $(wildcard $(DEVKITPRO)/rules/3ds.mk)
+ifeq ($(RULES_MK),)
+  RULES_MK := $(wildcard $(DEVKITPRO)/devkitARM/3ds.mk)
+endif
+ifeq ($(RULES_MK),)
+  RULES_MK := $(firstword $(wildcard $(DEVKITPRO)/*/3ds.mk))
+endif
+ifeq ($(RULES_MK),)
+  $(error "3ds.mk nicht gefunden – bitte 3ds-dev installieren: dkp-pacman -S 3ds-dev")
+endif
+
+include $(RULES_MK)
+
 #---------------------------------------------------------------------------------
 TARGET      := DarkFox-3DS
 BUILD       := build
@@ -48,8 +40,6 @@ APP_AUTHOR      := DarkFox Team
 ICON := resources/icon.png
 
 #---------------------------------------------------------------------------------
-# options for code generation
-#---------------------------------------------------------------------------------
 ARCH    := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
 CFLAGS  := -g -Wall -O2 -mword-relocations \
@@ -65,15 +55,8 @@ LDFLAGS  = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 LIBS := -lctru -lm
 
-#---------------------------------------------------------------------------------
-# list of directories containing libraries, this must be the top level containing
-# include and lib directories
-#---------------------------------------------------------------------------------
 LIBDIRS := $(CTRULIB)
 
-#---------------------------------------------------------------------------------
-# no real need to edit anything past this point unless you need to add additional
-# rules for different file extensions
 #---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 #---------------------------------------------------------------------------------
@@ -95,33 +78,27 @@ SHLISTFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
 GFXFILES    := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
 BINFILES    := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-#---------------------------------------------------------------------------------
-# use CXX for linking C++ projects, CC for standard C
-#---------------------------------------------------------------------------------
 ifeq ($(strip $(CPPFILES)),)
     export LD := $(CC)
 else
     export LD := $(CXX)
 endif
 
-#---------------------------------------------------------------------------------
 export OFILES_SOURCES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES_BIN     := $(addsuffix .o,$(BINFILES))
+export OFILES         := $(PICAFILES:.v.pica=.shbin.o) \
+                         $(SHLISTFILES:.shlist=.shbin.o) \
+                         $(if $(strip $(GFXFILES)),$(GFXFILES:.t3s=.t3x.o),) \
+                         $(OFILES_BIN) \
+                         $(OFILES_SOURCES)
 
-export OFILES_BIN := $(addsuffix .o,$(BINFILES))
+export HFILES   := $(PICAFILES:.v.pica=_shbin.h) $(SHLISTFILES:.shlist=_shbin.h) \
+                   $(addsuffix .h,$(subst .,_,$(BINFILES))) \
+                   $(GFXFILES:.t3s=.t3x.h)
 
-export OFILES := $(PICAFILES:.v.pica=.shbin.o) \
-                 $(SHLISTFILES:.shlist=.shbin.o) \
-                 $(if $(strip $(GFXFILES)),$(GFXFILES:.t3s=.t3x.o),) \
-                 $(OFILES_BIN) \
-                 $(OFILES_SOURCES)
-
-export HFILES := $(PICAFILES:.v.pica=_shbin.h) $(SHLISTFILES:.shlist=_shbin.h) \
-                 $(addsuffix .h,$(subst .,_,$(BINFILES))) \
-                 $(GFXFILES:.t3s=.t3x.h)
-
-export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
-                  $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                  -I$(CURDIR)/$(BUILD)
+export INCLUDE  := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+                   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+                   -I$(CURDIR)/$(BUILD)
 
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
@@ -150,14 +127,12 @@ endif
 
 .PHONY: $(BUILD) clean all
 
-#---------------------------------------------------------------------------------
 all: $(BUILD)
 
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
-#---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf
@@ -165,30 +140,15 @@ clean:
 #---------------------------------------------------------------------------------
 else
 #---------------------------------------------------------------------------------
-# main targets
-#---------------------------------------------------------------------------------
+
 $(OUTPUT).3dsx: $(OUTPUT).elf $(_3DSXDEPS)
 
 $(OFILES_SOURCES): $(HFILES)
 
-#---------------------------------------------------------------------------------
-%.bin.o	%_bin.h :	%.bin
-#---------------------------------------------------------------------------------
+%.bin.o %_bin.h : %.bin
 	@echo $(notdir $<)
 	@$(bin2o)
 
-#---------------------------------------------------------------------------------
-%.t3x.o	%.t3x.h :	%.t3s
-#---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	@tex3ds -i $< -H $*.t3x.h -d $*.d -o $(TOPDIR)/$(BUILD)/$*.t3x
-	@bin2s $(TOPDIR)/$(BUILD)/$*.t3x | $(AS) -o $@
-	@echo "extern const u8" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"_end[];" > `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
-	@echo "extern const u8" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"[];"       >> `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
-	@echo "extern const u32" `(echo $(notdir $*) | sed -e 's/^\([0-9]\)/_\1/' -e 's/[^A-Za-z0-9_]/_/g')`"_size;"  >> `(echo $(TOPDIR)/$(BUILD)/$*.t3x.h)`
-
 -include $(DEPSDIR)/*.d
 
-#---------------------------------------------------------------------------------------
 endif
-#---------------------------------------------------------------------------------------
