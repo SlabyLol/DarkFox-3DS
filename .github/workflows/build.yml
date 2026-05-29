@@ -7,45 +7,64 @@ on:
 
 jobs:
   # ═══════════════════════════════════════════════════════
-  # JOB 1: bannertool + makerom bauen (außerhalb Container)
+  # JOB 1: bannertool + makerom herunterladen
   # ═══════════════════════════════════════════════════════
   build-tools:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Abhängigkeiten installieren
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: bannertool herunterladen (pre-built Linux binary)
         run: |
-          sudo apt-get update && sudo apt-get install -y \
-            cmake build-essential
+          mkdir -p ~/tools /tmp/bt
+          # Release v1.2.2 enthält Linux-Binary aus 1.2.0
+          gh release download v1.2.2 \
+            --repo Epicpkmn11/bannertool \
+            --pattern "*.zip" \
+            -D /tmp/bt
+          echo "=== Heruntergeladene Dateien ==="
+          ls -la /tmp/bt/
+          cd /tmp/bt && unzip -o *.zip
+          echo "=== Nach dem Entpacken ==="
+          find /tmp/bt -type f | sort
+          # Linux-Binary finden (nicht .exe)
+          BIN=$(find /tmp/bt -type f -name "bannertool" ! -name "*.exe" | head -1)
+          if [ -z "$BIN" ]; then
+            # Manchmal ohne Endung oder mit linux im Namen
+            BIN=$(find /tmp/bt -type f ! -name "*.exe" ! -name "*.zip" ! -name "*.txt" ! -name "*.md" | head -1)
+          fi
+          echo "→ Binary: $BIN"
+          cp "$BIN" ~/tools/bannertool
+          chmod +x ~/tools/bannertool
+          echo "✅ bannertool bereit"
 
-      # Steveice10/bannertool existiert nicht mehr → Epicpkmn11/bannertool (aktiver Fork)
-      - name: bannertool auschecken
-        uses: actions/checkout@v4
-        with:
-          repository: Epicpkmn11/bannertool
-          path: bannertool-src
-
-      - name: bannertool bauen
+      - name: makerom herunterladen (pre-built Linux binary)
         run: |
-          cd bannertool-src
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-          mkdir -p ~/tools
-          cp build/bannertool ~/tools/bannertool
-          echo "✅ bannertool gebaut"
+          mkdir -p /tmp/mr
+          # makerom v0.19.0 hat Linux-Binary als Release-Asset
+          gh release download makerom-v0.19.0 \
+            --repo 3DSGuy/Project_CTR \
+            --pattern "*linux*" \
+            -D /tmp/mr || \
+          gh release download makerom-v0.19.0 \
+            --repo 3DSGuy/Project_CTR \
+            -D /tmp/mr
+          echo "=== Heruntergeladene Dateien ==="
+          ls -la /tmp/mr/
+          # Linux-Binary finden
+          BIN=$(find /tmp/mr -type f ! -name "*.exe" ! -name "*.zip" ! -name "*.tar.gz" ! -name "*.txt" ! -name "*.md" | head -1)
+          echo "→ Binary: $BIN"
+          cp "$BIN" ~/tools/makerom
+          chmod +x ~/tools/makerom
+          echo "✅ makerom bereit"
 
-      # 3DSGuy/Project_CTR existiert und hat makerom
-      - name: Project_CTR auschecken
-        uses: actions/checkout@v4
-        with:
-          repository: 3DSGuy/Project_CTR
-          path: project-ctr-src
-
-      - name: makerom bauen
+      - name: Tools testen
         run: |
-          cd project-ctr-src/makerom
-          make
-          cp makerom ~/tools/makerom
-          echo "✅ makerom gebaut"
+          echo "bannertool: $(~/tools/bannertool --version 2>&1 || echo 'OK')"
+          echo "makerom:    $(~/tools/makerom --version 2>&1 || echo 'OK')"
 
       - name: Tools als Artifact hochladen
         uses: actions/upload-artifact@v4
@@ -109,7 +128,6 @@ jobs:
         run: |
           mkdir -p resources
 
-          # icon.png (48x48)
           if [ ! -f resources/icon.png ]; then
             echo "⚠ Kein icon.png – erstelle Placeholder"
             python3 -c "
@@ -134,7 +152,6 @@ jobs:
           "
           fi
 
-          # banner.png (256x128)
           if [ ! -f resources/banner.png ]; then
             echo "⚠ Kein banner.png – erstelle Placeholder"
             python3 -c "
@@ -159,7 +176,6 @@ jobs:
           "
           fi
 
-          # audio.wav (stumm, 1 Sek.)
           if [ ! -f resources/audio.wav ]; then
             echo "⚠ Kein audio.wav – erstelle stille WAV"
             python3 -c "
@@ -178,7 +194,6 @@ jobs:
           "
           fi
 
-          # app.rsf
           if [ ! -f resources/app.rsf ]; then
             echo "⚠ Kein app.rsf – erstelle Standard-RSF"
             cat > resources/app.rsf << 'RSF'
@@ -207,8 +222,7 @@ jobs:
           RSF
           fi
 
-          echo "=== Resources ==="
-          ls -la resources/
+          echo "=== Resources ===" && ls -la resources/
 
       # ─────────────────────────────────────────────
       # 6. SMDH + Banner + CIA bauen
@@ -217,49 +231,32 @@ jobs:
         run: |
           ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
           if [ -z "$ELF" ]; then
-            echo "❌ Keine .elf Datei gefunden!"
-            exit 1
+            echo "❌ Keine .elf Datei gefunden!" && exit 1
           fi
-          echo "✅ ELF gefunden: $ELF"
+          echo "✅ ELF: $ELF"
 
           bannertool makesmdh \
-            -s "DarkFox-3DS" \
-            -l "DarkFox-3DS Homebrew" \
-            -p "DarkFox Team" \
-            -i resources/icon.png \
-            -o DarkFox.smdh
+            -s "DarkFox-3DS" -l "DarkFox-3DS Homebrew" -p "DarkFox Team" \
+            -i resources/icon.png -o DarkFox.smdh
 
           bannertool makebanner \
-            -i resources/banner.png \
-            -a resources/audio.wav \
-            -o DarkFox.bnr
+            -i resources/banner.png -a resources/audio.wav -o DarkFox.bnr
 
-          makerom -f cia \
-            -target t \
-            -exefslogo \
-            -o DarkFox.cia \
-            -elf "$ELF" \
-            -rsf resources/app.rsf \
-            -banner DarkFox.bnr \
-            -icon DarkFox.smdh
+          makerom -f cia -target t -exefslogo \
+            -o DarkFox.cia -elf "$ELF" -rsf resources/app.rsf \
+            -banner DarkFox.bnr -icon DarkFox.smdh
 
-          echo "✅ CIA erfolgreich erstellt"
+          echo "✅ CIA erstellt"
 
       # ─────────────────────────────────────────────
       # 7. Build-Ausgabe prüfen
       # ─────────────────────────────────────────────
       - name: Build-Ausgabe prüfen
         run: |
-          echo "=== Alle Build-Dateien ==="
           find . -maxdepth 2 \( \
-            -name "*.3dsx" -o \
-            -name "*.cia"  -o \
-            -name "*.elf"  -o \
-            -name "*.smdh" -o \
-            -name "*.bnr"  \
+            -name "*.3dsx" -o -name "*.cia" -o -name "*.elf" -o \
+            -name "*.smdh" -o -name "*.bnr" \
           \) 2>/dev/null | sort
-          echo ""
-          echo "=== Dateigrößen ==="
           ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
 
       # ─────────────────────────────────────────────
