@@ -11,6 +11,8 @@ jobs:
   # ═══════════════════════════════════════════════════════
   build-tools:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Abhängigkeiten installieren
         run: |
@@ -20,10 +22,10 @@ jobs:
       - name: bannertool bauen
         run: |
           mkdir -p /tmp/bannertool-src
-          echo "→ Lade bannertool via GitHub API..."
-          # /tarball gibt immer den Default-Branch zurück, egal wie er heißt
+          echo "→ Lade bannertool..."
           curl -L --retry 3 \
-            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
             -o /tmp/bannertool.tar.gz \
             "https://api.github.com/repos/Steveice10/bannertool/tarball"
           echo "→ Dateigröße: $(wc -c < /tmp/bannertool.tar.gz) Bytes"
@@ -41,9 +43,10 @@ jobs:
       - name: makerom bauen
         run: |
           mkdir -p /tmp/makerom-src
-          echo "→ Lade Project_CTR via GitHub API..."
+          echo "→ Lade Project_CTR..."
           curl -L --retry 3 \
-            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
             -o /tmp/makerom.tar.gz \
             "https://api.github.com/repos/3DSGuy/Project_CTR/tarball"
           echo "→ Dateigröße: $(wc -c < /tmp/makerom.tar.gz) Bytes"
