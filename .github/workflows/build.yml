@@ -36,23 +36,21 @@ jobs:
           apt-get update && apt-get install -y \
             cmake \
             build-essential \
-            git \
-            unzip \
+            tar \
             curl \
             python3 \
             --no-install-recommends
 
       # ─────────────────────────────────────────────
-      # 4. bannertool aus Source bauen
+      # 4. bannertool aus Source bauen (tarball statt git)
       # ─────────────────────────────────────────────
       - name: bannertool bauen
         run: |
-          GIT_TERMINAL_PROMPT=0 git clone \
-            -c credential.helper= \
-            -c http.sslVerify=false \
-            --depth 1 \
-            https://github.com/Steveice10/bannertool.git /tmp/bannertool
-          cd /tmp/bannertool
+          mkdir -p /tmp/bannertool-src
+          curl -L --retry 3 \
+            https://github.com/Steveice10/bannertool/archive/refs/heads/master.tar.gz \
+            | tar -xz -C /tmp/bannertool-src --strip-components=1
+          cd /tmp/bannertool-src
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
           cp build/bannertool /usr/local/bin/bannertool
@@ -60,16 +58,15 @@ jobs:
           echo "bannertool installiert: $(bannertool --version 2>&1 || echo 'OK')"
 
       # ─────────────────────────────────────────────
-      # 5. makerom aus Source bauen
+      # 5. makerom aus Source bauen (tarball statt git)
       # ─────────────────────────────────────────────
       - name: makerom bauen
         run: |
-          GIT_TERMINAL_PROMPT=0 git clone \
-            -c credential.helper= \
-            -c http.sslVerify=false \
-            --depth 1 \
-            https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
-          cd /tmp/Project_CTR/makerom
+          mkdir -p /tmp/makerom-src
+          curl -L --retry 3 \
+            https://github.com/3DSGuy/Project_CTR/archive/refs/heads/master.tar.gz \
+            | tar -xz -C /tmp/makerom-src --strip-components=1
+          cd /tmp/makerom-src/makerom
           make
           cp makerom /usr/local/bin/makerom
           chmod +x /usr/local/bin/makerom
@@ -83,7 +80,6 @@ jobs:
 
       # ─────────────────────────────────────────────
       # 7. resources/ vorbereiten falls nicht vorhanden
-      #    (Stub-Dateien für CI – ersetze durch echte Assets)
       # ─────────────────────────────────────────────
       - name: Fehlende Resources erstellen (Stubs)
         run: |
@@ -94,7 +90,6 @@ jobs:
             echo "⚠ Kein icon.png gefunden – erstelle Placeholder"
             python3 -c "
           import struct, zlib
-
           def write_png(path, w, h, color=(100, 100, 180)):
               def chunk(tag, data):
                   c = zlib.crc32(tag + data) & 0xFFFFFFFF
@@ -120,7 +115,6 @@ jobs:
             echo "⚠ Kein banner.png gefunden – erstelle Placeholder"
             python3 -c "
           import struct, zlib
-
           def write_png(path, w, h, color=(30, 30, 60)):
               def chunk(tag, data):
                   c = zlib.crc32(tag + data) & 0xFFFFFFFF
@@ -147,7 +141,7 @@ jobs:
             python3 -c "
           import struct
           sample_rate = 22050
-          num_samples = sample_rate  # 1 Sekunde
+          num_samples = sample_rate
           data_size   = num_samples * 2
           with open('resources/audio.wav', 'wb') as f:
               f.write(b'RIFF')
@@ -198,7 +192,6 @@ jobs:
       # ─────────────────────────────────────────────
       - name: CIA bauen
         run: |
-          # ELF-Datei suchen
           ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
           if [ -z "$ELF" ]; then
             echo "❌ Keine .elf Datei gefunden!"
@@ -206,7 +199,6 @@ jobs:
           fi
           echo "✅ ELF gefunden: $ELF"
 
-          # SMDH erstellen
           bannertool makesmdh \
             -s "DarkFox-3DS" \
             -l "DarkFox-3DS Homebrew" \
@@ -214,13 +206,11 @@ jobs:
             -i resources/icon.png \
             -o DarkFox.smdh
 
-          # Banner erstellen
           bannertool makebanner \
             -i resources/banner.png \
             -a resources/audio.wav \
             -o DarkFox.bnr
 
-          # CIA erstellen (ohne -logo für Homebrew)
           makerom -f cia \
             -target t \
             -exefslogo \
