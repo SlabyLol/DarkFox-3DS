@@ -47,7 +47,11 @@ jobs:
       # ─────────────────────────────────────────────
       - name: bannertool bauen
         run: |
-          git clone https://github.com/Steveice10/bannertool.git /tmp/bannertool
+          GIT_TERMINAL_PROMPT=0 git clone \
+            -c credential.helper= \
+            -c http.sslVerify=false \
+            --depth 1 \
+            https://github.com/Steveice10/bannertool.git /tmp/bannertool
           cd /tmp/bannertool
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
@@ -60,7 +64,11 @@ jobs:
       # ─────────────────────────────────────────────
       - name: makerom bauen
         run: |
-          git clone https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
+          GIT_TERMINAL_PROMPT=0 git clone \
+            -c credential.helper= \
+            -c http.sslVerify=false \
+            --depth 1 \
+            https://github.com/3DSGuy/Project_CTR.git /tmp/Project_CTR
           cd /tmp/Project_CTR/makerom
           make
           cp makerom /usr/local/bin/makerom
