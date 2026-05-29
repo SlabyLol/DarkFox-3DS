@@ -17,11 +17,11 @@ jobs:
           sudo apt-get update && sudo apt-get install -y \
             cmake build-essential
 
-      # actions/checkout kümmert sich um Auth – kein curl/git nötig
+      # Steveice10/bannertool existiert nicht mehr → Epicpkmn11/bannertool (aktiver Fork)
       - name: bannertool auschecken
         uses: actions/checkout@v4
         with:
-          repository: Steveice10/bannertool
+          repository: Epicpkmn11/bannertool
           path: bannertool-src
 
       - name: bannertool bauen
@@ -33,6 +33,7 @@ jobs:
           cp build/bannertool ~/tools/bannertool
           echo "✅ bannertool gebaut"
 
+      # 3DSGuy/Project_CTR existiert und hat makerom
       - name: Project_CTR auschecken
         uses: actions/checkout@v4
         with:
