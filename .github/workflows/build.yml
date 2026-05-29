@@ -11,50 +11,37 @@ jobs:
   # ═══════════════════════════════════════════════════════
   build-tools:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Abhängigkeiten installieren
         run: |
           sudo apt-get update && sudo apt-get install -y \
-            cmake build-essential curl tar file
+            cmake build-essential
+
+      # actions/checkout kümmert sich um Auth – kein curl/git nötig
+      - name: bannertool auschecken
+        uses: actions/checkout@v4
+        with:
+          repository: Steveice10/bannertool
+          path: bannertool-src
 
       - name: bannertool bauen
         run: |
-          mkdir -p /tmp/bannertool-src
-          echo "→ Lade bannertool..."
-          curl -L --retry 3 \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/octet-stream" \
-            -o /tmp/bannertool.tar.gz \
-            "https://api.github.com/repos/Steveice10/bannertool/tarball"
-          echo "→ Dateigröße: $(wc -c < /tmp/bannertool.tar.gz) Bytes"
-          file /tmp/bannertool.tar.gz
-          tar -xz -C /tmp/bannertool-src \
-            --strip-components=1 \
-            -f /tmp/bannertool.tar.gz
-          cd /tmp/bannertool-src
+          cd bannertool-src
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
           mkdir -p ~/tools
           cp build/bannertool ~/tools/bannertool
           echo "✅ bannertool gebaut"
 
+      - name: Project_CTR auschecken
+        uses: actions/checkout@v4
+        with:
+          repository: 3DSGuy/Project_CTR
+          path: project-ctr-src
+
       - name: makerom bauen
         run: |
-          mkdir -p /tmp/makerom-src
-          echo "→ Lade Project_CTR..."
-          curl -L --retry 3 \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/octet-stream" \
-            -o /tmp/makerom.tar.gz \
-            "https://api.github.com/repos/3DSGuy/Project_CTR/tarball"
-          echo "→ Dateigröße: $(wc -c < /tmp/makerom.tar.gz) Bytes"
-          file /tmp/makerom.tar.gz
-          tar -xz -C /tmp/makerom-src \
-            --strip-components=1 \
-            -f /tmp/makerom.tar.gz
-          cd /tmp/makerom-src/makerom
+          cd project-ctr-src/makerom
           make
           cp makerom ~/tools/makerom
           echo "✅ makerom gebaut"
