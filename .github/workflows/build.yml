@@ -20,20 +20,16 @@ jobs:
       - name: bannertool herunterladen
         run: |
           mkdir -p ~/tools /tmp/bt
-          # Alle Assets herunterladen (kein Pattern – wir schauen was da ist)
           gh release download v1.2.2 \
             --repo Epicpkmn11/bannertool \
             -D /tmp/bt
-          echo "=== Assets ==="
-          ls -la /tmp/bt/
-          # Alle Zips entpacken
+          echo "=== Assets ===" && ls -la /tmp/bt/
           for z in /tmp/bt/*.zip; do
             echo "→ Entpacke $z"
             unzip -o "$z" -d /tmp/bt/extracted/
           done
           echo "=== Extrahierte Dateien ==="
           find /tmp/bt/extracted -type f | sort
-          # Linux-Binary: nicht .exe, nicht .zip, ausführbar oder kein Anhang
           BIN=$(find /tmp/bt/extracted -type f ! -name "*.exe" ! -name "*.dll" \
                 ! -name "*.txt" ! -name "*.md" | grep -i linux | head -1)
           if [ -z "$BIN" ]; then
@@ -48,13 +44,10 @@ jobs:
       - name: makerom herunterladen
         run: |
           mkdir -p /tmp/mr
-          # Ubuntu x86_64 Binary (exakter Name aus dem vorherigen Lauf bekannt)
           gh release download makerom-v0.19.0 \
             --repo 3DSGuy/Project_CTR \
             --pattern "*ubuntu_x86_64*" \
             -D /tmp/mr
-          echo "=== Assets ==="
-          ls -la /tmp/mr/
           unzip -o /tmp/mr/makerom-v0.19.0-ubuntu_x86_64.zip -d /tmp/mr/extracted/
           echo "=== Extrahierte Dateien ==="
           find /tmp/mr/extracted -type f | sort
@@ -99,6 +92,18 @@ jobs:
       - name: PATH setzen
         run: |
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
+
+      # ─────────────────────────────────────────────
+      # 3DS-Entwicklungstools installieren
+      # (devkitarm-Container hat nur den Compiler,
+      #  3ds.mk und libctru kommen von 3ds-dev)
+      # ─────────────────────────────────────────────
+      - name: 3DS-Dev-Tools installieren
+        run: |
+          dkp-pacman -Syu --noconfirm
+          dkp-pacman -S --noconfirm 3ds-dev
+          echo "✅ 3ds-dev installiert"
+          ls /opt/devkitpro/rules/
 
       - name: Build-Tools herunterladen
         uses: actions/download-artifact@v4
