@@ -20,24 +20,17 @@ jobs:
       - name: bannertool bauen
         run: |
           mkdir -p /tmp/bannertool-src
-
-          # Erst in Datei laden, dann prüfen
-          echo "→ Lade bannertool (main)..."
-          curl -L --retry 3 -f \
+          echo "→ Lade bannertool via GitHub API..."
+          # /tarball gibt immer den Default-Branch zurück, egal wie er heißt
+          curl -L --retry 3 \
+            -H "Accept: application/vnd.github+json" \
             -o /tmp/bannertool.tar.gz \
-            "https://github.com/Steveice10/bannertool/archive/refs/heads/main.tar.gz" \
-            || (echo "main fehlgeschlagen, versuche master..." && \
-                curl -L --retry 3 -f \
-                  -o /tmp/bannertool.tar.gz \
-                  "https://github.com/Steveice10/bannertool/archive/refs/heads/master.tar.gz")
-
+            "https://api.github.com/repos/Steveice10/bannertool/tarball"
           echo "→ Dateigröße: $(wc -c < /tmp/bannertool.tar.gz) Bytes"
           file /tmp/bannertool.tar.gz
-
           tar -xz -C /tmp/bannertool-src \
             --strip-components=1 \
             -f /tmp/bannertool.tar.gz
-
           cd /tmp/bannertool-src
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel
@@ -48,23 +41,16 @@ jobs:
       - name: makerom bauen
         run: |
           mkdir -p /tmp/makerom-src
-
-          echo "→ Lade Project_CTR (master)..."
-          curl -L --retry 3 -f \
+          echo "→ Lade Project_CTR via GitHub API..."
+          curl -L --retry 3 \
+            -H "Accept: application/vnd.github+json" \
             -o /tmp/makerom.tar.gz \
-            "https://github.com/3DSGuy/Project_CTR/archive/refs/heads/master.tar.gz" \
-            || (echo "master fehlgeschlagen, versuche main..." && \
-                curl -L --retry 3 -f \
-                  -o /tmp/makerom.tar.gz \
-                  "https://github.com/3DSGuy/Project_CTR/archive/refs/heads/main.tar.gz")
-
+            "https://api.github.com/repos/3DSGuy/Project_CTR/tarball"
           echo "→ Dateigröße: $(wc -c < /tmp/makerom.tar.gz) Bytes"
           file /tmp/makerom.tar.gz
-
           tar -xz -C /tmp/makerom-src \
             --strip-components=1 \
             -f /tmp/makerom.tar.gz
-
           cd /tmp/makerom-src/makerom
           make
           cp makerom ~/tools/makerom
