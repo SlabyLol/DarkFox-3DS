@@ -6,8 +6,54 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ═══════════════════════════════════════════════════════
+  # JOB 1: bannertool + makerom bauen (außerhalb Container)
+  # ═══════════════════════════════════════════════════════
+  build-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Abhängigkeiten installieren
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            cmake build-essential curl tar
+
+      - name: bannertool bauen
+        run: |
+          mkdir -p /tmp/bannertool-src
+          curl -L --retry 3 \
+            https://github.com/Steveice10/bannertool/archive/refs/heads/master.tar.gz \
+            | tar -xz -C /tmp/bannertool-src --strip-components=1
+          cd /tmp/bannertool-src
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          mkdir -p ~/tools
+          cp build/bannertool ~/tools/bannertool
+          echo "bannertool OK: $(~/tools/bannertool --version 2>&1 || echo 'gebaut')"
+
+      - name: makerom bauen
+        run: |
+          mkdir -p /tmp/makerom-src
+          curl -L --retry 3 \
+            https://github.com/3DSGuy/Project_CTR/archive/refs/heads/master.tar.gz \
+            | tar -xz -C /tmp/makerom-src --strip-components=1
+          cd /tmp/makerom-src/makerom
+          make
+          cp makerom ~/tools/makerom
+          echo "makerom OK: $(~/tools/makerom --version 2>&1 || echo 'gebaut')"
+
+      - name: Tools als Artifact hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-tools
+          path: ~/tools/
+          retention-days: 1
+
+  # ═══════════════════════════════════════════════════════
+  # JOB 2: 3DS Projekt bauen (im devkitPro Container)
+  # ═══════════════════════════════════════════════════════
   build:
     runs-on: ubuntu-latest
+    needs: build-tools
     container:
       image: devkitpro/devkitarm:20240202
       env:
@@ -29,65 +75,37 @@ jobs:
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 3. Abhängigkeiten installieren
+      # 3. Build-Tools aus Job 1 herunterladen
       # ─────────────────────────────────────────────
-      - name: Abhängigkeiten installieren
-        run: |
-          apt-get update && apt-get install -y \
-            cmake \
-            build-essential \
-            tar \
-            curl \
-            python3 \
-            --no-install-recommends
+      - name: Build-Tools herunterladen
+        uses: actions/download-artifact@v4
+        with:
+          name: build-tools
+          path: /usr/local/bin/
 
-      # ─────────────────────────────────────────────
-      # 4. bannertool aus Source bauen (tarball statt git)
-      # ─────────────────────────────────────────────
-      - name: bannertool bauen
+      - name: Tools ausführbar machen
         run: |
-          mkdir -p /tmp/bannertool-src
-          curl -L --retry 3 \
-            https://github.com/Steveice10/bannertool/archive/refs/heads/master.tar.gz \
-            | tar -xz -C /tmp/bannertool-src --strip-components=1
-          cd /tmp/bannertool-src
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-          cp build/bannertool /usr/local/bin/bannertool
           chmod +x /usr/local/bin/bannertool
-          echo "bannertool installiert: $(bannertool --version 2>&1 || echo 'OK')"
-
-      # ─────────────────────────────────────────────
-      # 5. makerom aus Source bauen (tarball statt git)
-      # ─────────────────────────────────────────────
-      - name: makerom bauen
-        run: |
-          mkdir -p /tmp/makerom-src
-          curl -L --retry 3 \
-            https://github.com/3DSGuy/Project_CTR/archive/refs/heads/master.tar.gz \
-            | tar -xz -C /tmp/makerom-src --strip-components=1
-          cd /tmp/makerom-src/makerom
-          make
-          cp makerom /usr/local/bin/makerom
           chmod +x /usr/local/bin/makerom
-          echo "makerom installiert: $(makerom --version 2>&1 || echo 'OK')"
+          echo "bannertool: $(bannertool --version 2>&1 || echo 'OK')"
+          echo "makerom:    $(makerom --version 2>&1 || echo 'OK')"
 
       # ─────────────────────────────────────────────
-      # 6. Projekt bauen → erzeugt .elf + .3dsx
+      # 4. Projekt bauen → erzeugt .elf + .3dsx
       # ─────────────────────────────────────────────
       - name: Build project (3DSX + ELF)
         run: make
 
       # ─────────────────────────────────────────────
-      # 7. resources/ vorbereiten falls nicht vorhanden
+      # 5. resources/ vorbereiten falls nicht vorhanden
       # ─────────────────────────────────────────────
       - name: Fehlende Resources erstellen (Stubs)
         run: |
           mkdir -p resources
 
-          # icon.png (48x48) – nur wenn nicht vorhanden
+          # icon.png (48x48)
           if [ ! -f resources/icon.png ]; then
-            echo "⚠ Kein icon.png gefunden – erstelle Placeholder"
+            echo "⚠ Kein icon.png – erstelle Placeholder"
             python3 -c "
           import struct, zlib
           def write_png(path, w, h, color=(100, 100, 180)):
@@ -110,9 +128,9 @@ jobs:
           "
           fi
 
-          # banner.png (256x128) – nur wenn nicht vorhanden
+          # banner.png (256x128)
           if [ ! -f resources/banner.png ]; then
-            echo "⚠ Kein banner.png gefunden – erstelle Placeholder"
+            echo "⚠ Kein banner.png – erstelle Placeholder"
             python3 -c "
           import struct, zlib
           def write_png(path, w, h, color=(30, 30, 60)):
@@ -135,14 +153,13 @@ jobs:
           "
           fi
 
-          # audio.wav (stumm, 1 Sek.) – nur wenn nicht vorhanden
+          # audio.wav (stumm, 1 Sek.)
           if [ ! -f resources/audio.wav ]; then
-            echo "⚠ Kein audio.wav gefunden – erstelle stille WAV"
+            echo "⚠ Kein audio.wav – erstelle stille WAV"
             python3 -c "
           import struct
           sample_rate = 22050
-          num_samples = sample_rate
-          data_size   = num_samples * 2
+          data_size   = sample_rate * 2
           with open('resources/audio.wav', 'wb') as f:
               f.write(b'RIFF')
               f.write(struct.pack('<I', 36 + data_size))
@@ -155,9 +172,9 @@ jobs:
           "
           fi
 
-          # app.rsf – nur wenn nicht vorhanden
+          # app.rsf
           if [ ! -f resources/app.rsf ]; then
-            echo "⚠ Kein app.rsf gefunden – erstelle Standard-RSF"
+            echo "⚠ Kein app.rsf – erstelle Standard-RSF"
             cat > resources/app.rsf << 'RSF'
           BasicInfo:
             Title:           DarkFox-3DS
@@ -188,7 +205,7 @@ jobs:
           ls -la resources/
 
       # ─────────────────────────────────────────────
-      # 8. SMDH + Banner + CIA bauen
+      # 6. SMDH + Banner + CIA bauen
       # ─────────────────────────────────────────────
       - name: CIA bauen
         run: |
@@ -223,7 +240,7 @@ jobs:
           echo "✅ CIA erfolgreich erstellt"
 
       # ─────────────────────────────────────────────
-      # 9. Build-Ausgabe prüfen
+      # 7. Build-Ausgabe prüfen
       # ─────────────────────────────────────────────
       - name: Build-Ausgabe prüfen
         run: |
@@ -235,13 +252,12 @@ jobs:
             -name "*.smdh" -o \
             -name "*.bnr"  \
           \) 2>/dev/null | sort
-
           echo ""
           echo "=== Dateigrößen ==="
           ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
 
       # ─────────────────────────────────────────────
-      # 10. Artifacts hochladen
+      # 8. Artifacts hochladen
       # ─────────────────────────────────────────────
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
