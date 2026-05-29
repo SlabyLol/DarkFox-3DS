@@ -17,45 +17,52 @@ jobs:
       - name: Abhängigkeiten installieren
         run: sudo apt-get update && sudo apt-get install -y unzip
 
-      - name: bannertool herunterladen (pre-built Linux binary)
+      - name: bannertool herunterladen
         run: |
           mkdir -p ~/tools /tmp/bt
-          # Release v1.2.2 enthält Linux-Binary aus 1.2.0
+          # Alle Assets herunterladen (kein Pattern – wir schauen was da ist)
           gh release download v1.2.2 \
             --repo Epicpkmn11/bannertool \
-            --pattern "*.zip" \
             -D /tmp/bt
-          echo "=== Heruntergeladene Dateien ==="
+          echo "=== Assets ==="
           ls -la /tmp/bt/
-          cd /tmp/bt && unzip -o *.zip
-          echo "=== Nach dem Entpacken ==="
-          find /tmp/bt -type f | sort
-          # Linux-Binary finden (nicht .exe)
-          BIN=$(find /tmp/bt -type f -name "bannertool" ! -name "*.exe" | head -1)
+          # Alle Zips entpacken
+          for z in /tmp/bt/*.zip; do
+            echo "→ Entpacke $z"
+            unzip -o "$z" -d /tmp/bt/extracted/
+          done
+          echo "=== Extrahierte Dateien ==="
+          find /tmp/bt/extracted -type f | sort
+          # Linux-Binary: nicht .exe, nicht .zip, ausführbar oder kein Anhang
+          BIN=$(find /tmp/bt/extracted -type f ! -name "*.exe" ! -name "*.dll" \
+                ! -name "*.txt" ! -name "*.md" | grep -i linux | head -1)
           if [ -z "$BIN" ]; then
-            # Manchmal ohne Endung oder mit linux im Namen
-            BIN=$(find /tmp/bt -type f ! -name "*.exe" ! -name "*.zip" ! -name "*.txt" ! -name "*.md" | head -1)
+            BIN=$(find /tmp/bt/extracted -type f ! -name "*.exe" ! -name "*.dll" \
+                  ! -name "*.txt" ! -name "*.md" | head -1)
           fi
           echo "→ Binary: $BIN"
           cp "$BIN" ~/tools/bannertool
           chmod +x ~/tools/bannertool
           echo "✅ bannertool bereit"
 
-      - name: makerom herunterladen (pre-built Linux binary)
+      - name: makerom herunterladen
         run: |
           mkdir -p /tmp/mr
-          # makerom v0.19.0 hat Linux-Binary als Release-Asset
+          # Ubuntu x86_64 Binary (exakter Name aus dem vorherigen Lauf bekannt)
           gh release download makerom-v0.19.0 \
             --repo 3DSGuy/Project_CTR \
-            --pattern "*linux*" \
-            -D /tmp/mr || \
-          gh release download makerom-v0.19.0 \
-            --repo 3DSGuy/Project_CTR \
+            --pattern "*ubuntu_x86_64*" \
             -D /tmp/mr
-          echo "=== Heruntergeladene Dateien ==="
+          echo "=== Assets ==="
           ls -la /tmp/mr/
-          # Linux-Binary finden
-          BIN=$(find /tmp/mr -type f ! -name "*.exe" ! -name "*.zip" ! -name "*.tar.gz" ! -name "*.txt" ! -name "*.md" | head -1)
+          unzip -o /tmp/mr/makerom-v0.19.0-ubuntu_x86_64.zip -d /tmp/mr/extracted/
+          echo "=== Extrahierte Dateien ==="
+          find /tmp/mr/extracted -type f | sort
+          BIN=$(find /tmp/mr/extracted -type f -name "makerom" | head -1)
+          if [ -z "$BIN" ]; then
+            BIN=$(find /tmp/mr/extracted -type f ! -name "*.exe" ! -name "*.zip" \
+                  ! -name "*.txt" ! -name "*.md" | head -1)
+          fi
           echo "→ Binary: $BIN"
           cp "$BIN" ~/tools/makerom
           chmod +x ~/tools/makerom
@@ -86,22 +93,13 @@ jobs:
         DEVKITARM: /opt/devkitpro/devkitARM
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1. Code auschecken
-      # ─────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ─────────────────────────────────────────────
-      # 2. PATH setzen
-      # ─────────────────────────────────────────────
       - name: PATH setzen
         run: |
           echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-      # ─────────────────────────────────────────────
-      # 3. Build-Tools aus Job 1 herunterladen
-      # ─────────────────────────────────────────────
       - name: Build-Tools herunterladen
         uses: actions/download-artifact@v4
         with:
@@ -115,21 +113,14 @@ jobs:
           echo "bannertool: $(bannertool --version 2>&1 || echo 'OK')"
           echo "makerom:    $(makerom --version 2>&1 || echo 'OK')"
 
-      # ─────────────────────────────────────────────
-      # 4. Projekt bauen → erzeugt .elf + .3dsx
-      # ─────────────────────────────────────────────
       - name: Build project (3DSX + ELF)
         run: make
 
-      # ─────────────────────────────────────────────
-      # 5. resources/ vorbereiten falls nicht vorhanden
-      # ─────────────────────────────────────────────
       - name: Fehlende Resources erstellen (Stubs)
         run: |
           mkdir -p resources
 
           if [ ! -f resources/icon.png ]; then
-            echo "⚠ Kein icon.png – erstelle Placeholder"
             python3 -c "
           import struct, zlib
           def write_png(path, w, h, color=(100, 100, 180)):
@@ -153,7 +144,6 @@ jobs:
           fi
 
           if [ ! -f resources/banner.png ]; then
-            echo "⚠ Kein banner.png – erstelle Placeholder"
             python3 -c "
           import struct, zlib
           def write_png(path, w, h, color=(30, 30, 60)):
@@ -177,7 +167,6 @@ jobs:
           fi
 
           if [ ! -f resources/audio.wav ]; then
-            echo "⚠ Kein audio.wav – erstelle stille WAV"
             python3 -c "
           import struct
           sample_rate = 22050
@@ -195,44 +184,34 @@ jobs:
           fi
 
           if [ ! -f resources/app.rsf ]; then
-            echo "⚠ Kein app.rsf – erstelle Standard-RSF"
             cat > resources/app.rsf << 'RSF'
           BasicInfo:
             Title:           DarkFox-3DS
             CompanyCode:     "0F"
             ProductCode:     CTR-P-DFOX
             ContentType:     Application
-
           Option:
             UseOnSD:          true
             FreeProductCode:  true
             MediaFootPadding: false
             EnableCrypt:      false
             EnableCompress:   false
-
           Rom:
             HostRoot: ""
-
           ExeFs:
             StackSize:        0x10000
             RemasterVersion:  0
-
           SystemControlInfo:
             SaveDataSize:     0x8000
           RSF
           fi
 
-          echo "=== Resources ===" && ls -la resources/
+          ls -la resources/
 
-      # ─────────────────────────────────────────────
-      # 6. SMDH + Banner + CIA bauen
-      # ─────────────────────────────────────────────
       - name: CIA bauen
         run: |
           ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
-          if [ -z "$ELF" ]; then
-            echo "❌ Keine .elf Datei gefunden!" && exit 1
-          fi
+          if [ -z "$ELF" ]; then echo "❌ Keine .elf!" && exit 1; fi
           echo "✅ ELF: $ELF"
 
           bannertool makesmdh \
@@ -248,9 +227,6 @@ jobs:
 
           echo "✅ CIA erstellt"
 
-      # ─────────────────────────────────────────────
-      # 7. Build-Ausgabe prüfen
-      # ─────────────────────────────────────────────
       - name: Build-Ausgabe prüfen
         run: |
           find . -maxdepth 2 \( \
@@ -259,9 +235,6 @@ jobs:
           \) 2>/dev/null | sort
           ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
 
-      # ─────────────────────────────────────────────
-      # 8. Artifacts hochladen
-      # ─────────────────────────────────────────────
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
