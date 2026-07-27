@@ -1,253 +1,58 @@
-name: Build DarkFox-3DS
-
+name: Build Nintendo 3DS CIA
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
-
+  pull_request:
 jobs:
-  # ═══════════════════════════════════════════════════════
-  # JOB 1: bannertool + makerom herunterladen
-  # ═══════════════════════════════════════════════════════
-  build-tools:
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Abhängigkeiten installieren
-        run: sudo apt-get update && sudo apt-get install -y unzip
-
-      - name: bannertool herunterladen
-        run: |
-          mkdir -p ~/tools /tmp/bt
-          gh release download v1.2.2 \
-            --repo Epicpkmn11/bannertool \
-            -D /tmp/bt
-          echo "=== Assets ===" && ls -la /tmp/bt/
-          for z in /tmp/bt/*.zip; do
-            echo "→ Entpacke $z"
-            unzip -o "$z" -d /tmp/bt/extracted/
-          done
-          echo "=== Extrahierte Dateien ==="
-          find /tmp/bt/extracted -type f | sort
-          BIN=$(find /tmp/bt/extracted -type f ! -name "*.exe" ! -name "*.dll" \
-                ! -name "*.txt" ! -name "*.md" | grep -i linux | head -1)
-          if [ -z "$BIN" ]; then
-            BIN=$(find /tmp/bt/extracted -type f ! -name "*.exe" ! -name "*.dll" \
-                  ! -name "*.txt" ! -name "*.md" | head -1)
-          fi
-          echo "→ Binary: $BIN"
-          cp "$BIN" ~/tools/bannertool
-          chmod +x ~/tools/bannertool
-          echo "✅ bannertool bereit"
-
-      - name: makerom herunterladen
-        run: |
-          mkdir -p /tmp/mr
-          gh release download makerom-v0.19.0 \
-            --repo 3DSGuy/Project_CTR \
-            --pattern "*ubuntu_x86_64*" \
-            -D /tmp/mr
-          unzip -o /tmp/mr/makerom-v0.19.0-ubuntu_x86_64.zip -d /tmp/mr/extracted/
-          echo "=== Extrahierte Dateien ==="
-          find /tmp/mr/extracted -type f | sort
-          BIN=$(find /tmp/mr/extracted -type f -name "makerom" | head -1)
-          if [ -z "$BIN" ]; then
-            BIN=$(find /tmp/mr/extracted -type f ! -name "*.exe" ! -name "*.zip" \
-                  ! -name "*.txt" ! -name "*.md" | head -1)
-          fi
-          echo "→ Binary: $BIN"
-          cp "$BIN" ~/tools/makerom
-          chmod +x ~/tools/makerom
-          echo "✅ makerom bereit"
-
-      - name: Tools testen
-        run: |
-          echo "bannertool: $(~/tools/bannertool --version 2>&1 || echo 'OK')"
-          echo "makerom:    $(~/tools/makerom --version 2>&1 || echo 'OK')"
-
-      - name: Tools als Artifact hochladen
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-tools
-          path: ~/tools/
-          retention-days: 1
-
-  # ═══════════════════════════════════════════════════════
-  # JOB 2: 3DS Projekt bauen (im devkitPro Container)
-  # ═══════════════════════════════════════════════════════
   build:
     runs-on: ubuntu-latest
-    needs: build-tools
+    permissions:
+      contents: write
     container:
-      image: devkitpro/devkitarm:20240202
-      env:
-        DEVKITPRO: /opt/devkitpro
-        DEVKITARM: /opt/devkitpro/devkitARM
-
+      image: devkitpro/devkitarm
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout repo
+      uses: actions/checkout@v4
 
-      - name: PATH setzen
-        run: |
-          echo "PATH=$DEVKITPRO/tools/bin:$DEVKITARM/bin:/usr/local/bin:$PATH" >> $GITHUB_ENV
+    - name: Build BannerTool
+      run: |
+        git clone https://github.com/carstene1ns/3ds-bannertool.git
+        cd 3ds-bannertool
+        cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        cmake --build build
+        cmake --install build
 
-      # ─────────────────────────────────────────────
-      # 3DS-Entwicklungstools installieren
-      # (devkitarm-Container hat nur den Compiler,
-      #  3ds.mk und libctru kommen von 3ds-dev)
-      # ─────────────────────────────────────────────
-      - name: 3DS-Dev-Tools installieren
-        run: |
-          dkp-pacman -Syu --noconfirm
-          dkp-pacman -S --noconfirm 3ds-dev
-          echo "✅ 3ds-dev installiert"
-          ls /opt/devkitpro/rules/
+    - name: Build Makerom
+      run: |
+        git clone --recursive https://github.com/3DSGuy/Project_CTR
+        cd Project_CTR/makerom
+        make deps
+        make
+        cp ./bin/makerom /usr/local/bin/makerom
+        chmod +x /usr/local/bin/makerom
 
-      - name: Build-Tools herunterladen
-        uses: actions/download-artifact@v4
-        with:
-          name: build-tools
-          path: /usr/local/bin/
+    - name: Build 3DSX and CIA
+      run: |
+        make 3dsx
+        make cia
 
-      - name: Tools ausführbar machen
-        run: |
-          chmod +x /usr/local/bin/bannertool
-          chmod +x /usr/local/bin/makerom
-          echo "bannertool: $(bannertool --version 2>&1 || echo 'OK')"
-          echo "makerom:    $(makerom --version 2>&1 || echo 'OK')"
-
-      - name: Build project (3DSX + ELF)
-        run: make
-
-      - name: Fehlende Resources erstellen (Stubs)
-        run: |
-          mkdir -p resources
-
-          if [ ! -f resources/icon.png ]; then
-            python3 -c "
-          import struct, zlib
-          def write_png(path, w, h, color=(100, 100, 180)):
-              def chunk(tag, data):
-                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
-                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
-              raw = b''
-              for _ in range(h):
-                  row = b'\x00'
-                  for _ in range(w):
-                      row += bytes(color) + b'\xff'
-                  raw += row
-              idat = zlib.compress(raw)
-              with open(path, 'wb') as f:
-                  f.write(b'\x89PNG\r\n\x1a\n')
-                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
-                  f.write(chunk(b'IDAT', idat))
-                  f.write(chunk(b'IEND', b''))
-          write_png('resources/icon.png', 48, 48)
-          "
-          fi
-
-          if [ ! -f resources/banner.png ]; then
-            python3 -c "
-          import struct, zlib
-          def write_png(path, w, h, color=(30, 30, 60)):
-              def chunk(tag, data):
-                  c = zlib.crc32(tag + data) & 0xFFFFFFFF
-                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', c)
-              raw = b''
-              for _ in range(h):
-                  row = b'\x00'
-                  for _ in range(w):
-                      row += bytes(color) + b'\xff'
-                  raw += row
-              idat = zlib.compress(raw)
-              with open(path, 'wb') as f:
-                  f.write(b'\x89PNG\r\n\x1a\n')
-                  f.write(chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)))
-                  f.write(chunk(b'IDAT', idat))
-                  f.write(chunk(b'IEND', b''))
-          write_png('resources/banner.png', 256, 128)
-          "
-          fi
-
-          if [ ! -f resources/audio.wav ]; then
-            python3 -c "
-          import struct
-          sample_rate = 22050
-          data_size   = sample_rate * 2
-          with open('resources/audio.wav', 'wb') as f:
-              f.write(b'RIFF')
-              f.write(struct.pack('<I', 36 + data_size))
-              f.write(b'WAVE')
-              f.write(b'fmt ')
-              f.write(struct.pack('<IHHIIHH', 16, 1, 1, sample_rate, sample_rate*2, 2, 16))
-              f.write(b'data')
-              f.write(struct.pack('<I', data_size))
-              f.write(b'\x00' * data_size)
-          "
-          fi
-
-          if [ ! -f resources/app.rsf ]; then
-            cat > resources/app.rsf << 'RSF'
-          BasicInfo:
-            Title:           DarkFox-3DS
-            CompanyCode:     "0F"
-            ProductCode:     CTR-P-DFOX
-            ContentType:     Application
-          Option:
-            UseOnSD:          true
-            FreeProductCode:  true
-            MediaFootPadding: false
-            EnableCrypt:      false
-            EnableCompress:   false
-          Rom:
-            HostRoot: ""
-          ExeFs:
-            StackSize:        0x10000
-            RemasterVersion:  0
-          SystemControlInfo:
-            SaveDataSize:     0x8000
-          RSF
-          fi
-
-          ls -la resources/
-
-      - name: CIA bauen
-        run: |
-          ELF=$(find . -maxdepth 2 -name "*.elf" | head -n1)
-          if [ -z "$ELF" ]; then echo "❌ Keine .elf!" && exit 1; fi
-          echo "✅ ELF: $ELF"
-
-          bannertool makesmdh \
-            -s "DarkFox-3DS" -l "DarkFox-3DS Homebrew" -p "DarkFox Team" \
-            -i resources/icon.png -o DarkFox.smdh
-
-          bannertool makebanner \
-            -i resources/banner.png -a resources/audio.wav -o DarkFox.bnr
-
-          makerom -f cia -target t -exefslogo \
-            -o DarkFox.cia -elf "$ELF" -rsf resources/app.rsf \
-            -banner DarkFox.bnr -icon DarkFox.smdh
-
-          echo "✅ CIA erstellt"
-
-      - name: Build-Ausgabe prüfen
-        run: |
-          find . -maxdepth 2 \( \
-            -name "*.3dsx" -o -name "*.cia" -o -name "*.elf" -o \
-            -name "*.smdh" -o -name "*.bnr" \
-          \) 2>/dev/null | sort
-          ls -lh *.3dsx *.cia *.smdh 2>/dev/null || true
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: DarkFox-3DS-build
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+          name: FoxWebChat
           path: |
-            ${{ github.workspace }}/*.3dsx
-            ${{ github.workspace }}/*.cia
-            ${{ github.workspace }}/*.smdh
-            ${{ github.workspace }}/*.elf
-          if-no-files-found: error
-          retention-days: 30
+            ./*.cia
+            ./*.3dsx
+
+    - name: Create/update GitHub Release
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: nightly
+        name: "Nightly Build"
+        prerelease: false
+        body: "Automatic Build Release"
+        files: |
+          ./*.cia
+          ./*.3dsx
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
