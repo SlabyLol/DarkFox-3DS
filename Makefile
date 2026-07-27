@@ -1,154 +1,94 @@
-#---------------------------------------------------------------------------------
-# DarkFox-3DS Makefile
-#---------------------------------------------------------------------------------
-.SUFFIXES:
-#---------------------------------------------------------------------------------
-ifeq ($(strip $(DEVKITPRO)),)
-$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
-endif
-
-TOPDIR ?= $(CURDIR)
-
-# devkitarm-rules 1.6.x änderte den Installationspfad –
-# beide Varianten werden geprüft
-RULES_MK := $(wildcard $(DEVKITPRO)/rules/3ds.mk)
-ifeq ($(RULES_MK),)
-  RULES_MK := $(wildcard $(DEVKITPRO)/devkitARM/3ds.mk)
-endif
-ifeq ($(RULES_MK),)
-  RULES_MK := $(firstword $(wildcard $(DEVKITPRO)/*/3ds.mk))
-endif
-ifeq ($(RULES_MK),)
-  $(error "3ds.mk nicht gefunden – bitte 3ds-dev installieren: dkp-pacman -S 3ds-dev")
-endif
-
-include $(RULES_MK)
-
-#---------------------------------------------------------------------------------
+# Target settings
 TARGET      := DarkFox-3DS
 BUILD       := build
 SOURCES     := source
-DATA        := data
 INCLUDES    := include
-GRAPHICS    := gfx
-ROMFS       :=
+ICON        := resources/icon.png
 
-APP_TITLE       := DarkFox-3DS
-APP_DESCRIPTION := A multi-purpose utility for Nintendo 3DS
-APP_AUTHOR      := DarkFox Team
+APP_TITLE   := DarkFox-3DS
+APP_AUTHOR  := DarkFox Co.
+APP_VERSION := 5.0.0
 
-ICON := resources/icon.png
+# DevkitPro environment setup
+ifeq ($(strip $(DEVKITARM)),)
+$(error "Please set DEVKITARM in your environment. export DEVKITARM=/opt/devkitpro/devkitARM")
+endif
 
-#---------------------------------------------------------------------------------
-ARCH    := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+include $(DEVKITARM)/3ds_rules
 
-CFLAGS  := -g -Wall -O2 -mword-relocations \
-            -ffunction-sections \
-            $(ARCH)
+PORTLIBS_PATH ?= $(DEVKITPRO)/portlibs
 
-CFLAGS  += $(INCLUDE) -DARM11 -D_3DS
+# Flags & Libraries
+ARCH        := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
+CFLAGS      := -Wall -O2 -mword-relocations $(ARCH) -DAPP_VERSION_STR=\"$(APP_VERSION)\"
+CXXFLAGS    := $(CFLAGS) -fno-rtti -fno-exceptions
 
-CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
+LIBS        := -lcitro2d -lcitro3d -lcurl -lmbedtls -lmbedcrypto -lmbedx509 -lz -lctru -lm
+LIBDIRS     := $(CTRULIB) $(DEVKITPRO)/citro2d $(DEVKITPRO)/citro3d $(PORTLIBS_PATH)/3ds $(PORTLIBS_PATH)/armv6k
 
-ASFLAGS := -g $(ARCH)
-LDFLAGS  = -specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
-
-LIBS := -lctru -lm
-
-LIBDIRS := $(CTRULIB)
-
-#---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
-#---------------------------------------------------------------------------------
 
-export OUTPUT  := $(CURDIR)/$(TARGET)
-export TOPDIR  := $(CURDIR)
-
-export VPATH   := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
-                  $(foreach dir,$(DATA),$(CURDIR)/$(dir)) \
-                  $(foreach dir,$(GRAPHICS),$(CURDIR)/$(dir))
-
-export DEPSDIR := $(CURDIR)/$(BUILD)
+export OUTPUT   := $(CURDIR)/$(TARGET)
+export VPATH    := $(foreach dir,$(SOURCES),$(CURDIR)/$(dir))
+export DEPSDIR  := $(CURDIR)/$(BUILD)
 
 CFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES    := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-SFILES      := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
-PICAFILES   := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))
-SHLISTFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
-GFXFILES    := $(foreach dir,$(GRAPHICS),$(notdir $(wildcard $(dir)/*.t3s)))
-BINFILES    := $(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-ifeq ($(strip $(CPPFILES)),)
-    export LD := $(CC)
-else
-    export LD := $(CXX)
-endif
-
-export OFILES_SOURCES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
-export OFILES_BIN     := $(addsuffix .o,$(BINFILES))
-export OFILES         := $(PICAFILES:.v.pica=.shbin.o) \
-                         $(SHLISTFILES:.shlist=.shbin.o) \
-                         $(if $(strip $(GFXFILES)),$(GFXFILES:.t3s=.t3x.o),) \
-                         $(OFILES_BIN) \
-                         $(OFILES_SOURCES)
-
-export HFILES   := $(PICAFILES:.v.pica=_shbin.h) $(SHLISTFILES:.shlist=_shbin.h) \
-                   $(addsuffix .h,$(subst .,_,$(BINFILES))) \
-                   $(GFXFILES:.t3s=.t3x.h)
-
+export OFILES   := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o)
 export INCLUDE  := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
                    $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
                    -I$(CURDIR)/$(BUILD)
 
-export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+.PHONY: all clean 3dsx cia
 
-export _3DSXDEPS := $(if $(NO_SMDH),,$(OUTPUT).smdh)
+all: 3dsx
 
-ifeq ($(strip $(ICON)),)
-    icons := $(wildcard *.png)
-    ifneq (,$(findstring $(TARGET).png,$(icons)))
-        export APP_ICON := $(TOPDIR)/$(TARGET).png
-    else
-        ifneq (,$(findstring icon.png,$(icons)))
-            export APP_ICON := $(TOPDIR)/icon.png
-        endif
-    endif
-else
-    export APP_ICON := $(TOPDIR)/$(ICON)
-endif
+3dsx: $(TARGET).3dsx
 
-ifeq ($(strip $(NO_SMDH)),)
-    export _3DSXFLAGS += --smdh=$(CURDIR)/$(TARGET).smdh
-endif
+cia: $(TARGET).cia
 
-ifneq ($(ROMFS),)
-    export _3DSXFLAGS += --romfs=$(CURDIR)/$(ROMFS)
-endif
+$(TARGET).3dsx: $(TARGET).elf
+	@echo "Building $(TARGET).3dsx using resources icon..."
+	@if [ -f $(ICON) ]; then \
+		bannertool makesmdh -s "$(APP_TITLE)" -l "$(APP_TITLE)" -p "$(APP_AUTHOR)" -i $(ICON) -o icon.bin; \
+	else \
+		bannertool makesmdh -s "$(APP_TITLE)" -l "$(APP_TITLE)" -p "$(APP_AUTHOR)" -o icon.bin; \
+	fi
+	@3dsxtool $(TARGET).elf $(TARGET).3dsx --smdh=icon.bin
+	@rm -f icon.bin
 
-.PHONY: $(BUILD) clean all
+$(TARGET).cia: $(TARGET).elf
+	@echo "Building $(TARGET).cia..."
+	@test -f resources/banner.wav || (echo "ERROR: resources/banner.wav fehlt (16-bit WAV fuer den CIA-Banner-Sound)."; exit 1)
+	@bannertool makesmdh -s "$(APP_TITLE)" -l "$(APP_TITLE)" -p "$(APP_AUTHOR)" -i $(ICON) -o icon.smdh
+	@bannertool makebanner -i resources/banner.png -a resources/banner.wav -o banner.bin
+	@cp $(TARGET).elf $(TARGET)_cia.elf
+	@arm-none-eabi-strip $(TARGET)_cia.elf
+	@makerom -f cia -o $(TARGET).cia -rsf app.rsf -target t -exefslogo -elf $(TARGET)_cia.elf -icon icon.smdh -banner banner.bin -desc app:4
+	@rm -f icon.smdh banner.bin $(TARGET)_cia.elf
 
-all: $(BUILD)
+clean:
+	@rm -rf $(BUILD) $(TARGET).3dsx $(TARGET).elf icon.bin
 
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
-	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
-clean:
-	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dsx $(OUTPUT).smdh $(TARGET).elf
+$(TARGET).elf: $(BUILD)
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR:/=)/Makefile
+	@cp $(BUILD)/$(TARGET).elf $(TARGET).elf 2>/dev/null || true
 
-#---------------------------------------------------------------------------------
 else
-#---------------------------------------------------------------------------------
 
-$(OUTPUT).3dsx: $(OUTPUT).elf $(_3DSXDEPS)
+DEPENDS := $(OFILES:.o=.d)
 
-$(OFILES_SOURCES): $(HFILES)
+CFLAGS   += $(INCLUDE) -D__3DS__
+CXXFLAGS += $(INCLUDE) -D__3DS__
 
-%.bin.o %_bin.h : %.bin
-	@echo $(notdir $<)
-	@$(bin2o)
+$(OUTPUT).elf: $(OFILES)
+	@echo linking $(notdir $@)
+	@$(CXX) -specs=3dsx.specs $(ARCH) $(OFILES) $(foreach dir,$(LIBDIRS),-L$(dir)/lib) $(LIBS) -o $@
 
--include $(DEPSDIR)/*.d
+-include $(DEPENDS)
 
 endif
